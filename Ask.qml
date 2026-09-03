@@ -27,8 +27,19 @@ Item {
   property string ctxTitle: ""
   property string ctxAddress: ""
   property string ctxCwd: ""
+  property string ctxGeometry: ""
+
+  // Explicitly attached files: [{ kind, path, label }]. Nothing lands here
+  // without a keystroke — a clipboard that quietly ships with every question
+  // is a password waiting to be sent somewhere.
+  property var attachments: []
+
+  // While a capture runs the card steps off screen, because it is an
+  // Overlay-layer surface and would otherwise be the thing photographed.
+  property bool capturing: false
 
   property string agent: ""
+  property string notice: ""
 
   // Shares the [menu] surface tokens, so a theme that styles the launcher
   // styles this too. Nothing here is a literal color.
@@ -48,6 +59,8 @@ Item {
 
   function open(payloadJson) {
     applyPayload(payloadJson)
+    root.attachments = []
+    root.notice = ""
     root.opened = true
     agentProbe.running = true
     Qt.callLater(function () { input.forceActiveFocus() })
@@ -81,7 +94,101 @@ Item {
     root.ctxClass = cls
     root.ctxTitle = cls ? String(w.title || "") : ""
     root.ctxAddress = cls ? String(w.address || "") : ""
+    root.ctxGeometry = cls ? String(w.geometry || "") : ""
     root.ctxCwd = String(p.cwd || "")
+  }
+
+  // ----------------------------------------------------------- attachments
+
+  function basename(path) {
+    var i = String(path).lastIndexOf("/")
+    return i === -1 ? String(path) : String(path).substring(i + 1)
+  }
+
+  // A chip saying "window shot" is worth more than one saying
+  // "window-20260903-221053-017.png": the timestamped filename is an
+  // implementation detail, and the user already knows which key they pressed.
+  function attachmentLabel(kind, path) {
+    if (kind === "window") return "window shot"
+    if (kind === "region") return "region shot"
+    if (kind === "clipboard")
+      return String(path).slice(-4) === ".txt" ? "clipboard text" : "clipboard image"
+    return root.basename(path)
+  }
+
+  function addAttachment(kind, path) {
+    var next = root.attachments.slice()
+    next.push({ kind: kind, path: path, label: root.attachmentLabel(kind, path) })
+    root.attachments = next
+  }
+
+  function removeAttachment(index) {
+    if (index < 0 || index >= root.attachments.length) return
+    var next = root.attachments.slice()
+    next.splice(index, 1)
+    root.attachments = next
+  }
+
+  function flash(message) {
+    root.notice = message
+    noticeTimer.restart()
+  }
+
+  // Capture modes that photograph the screen have to run with the card
+  // hidden. Hiding a layer surface drops its keyboard focus, so it has to be
+  // taken back once the capture is done or the composer goes deaf.
+  function runCapture(kind, args) {
+    if (root.capturing) return
+    root.capturing = true
+    captureProc.kind = kind
+    captureProc.command = args
+    captureProc.running = true
+  }
+
+  function captureWindow() {
+    if (!root.ctxGeometry) {
+      root.flash("no window to capture")
+      return
+    }
+    runCapture("window", ["omarchy-ask-capture", "window", root.ctxGeometry])
+  }
+
+  function captureRegion() {
+    runCapture("region", ["omarchy-ask-capture", "region"])
+  }
+
+  function attachClipboard() {
+    runCapture("clipboard", ["omarchy-ask-capture", "clipboard"])
+  }
+
+  Timer {
+    id: noticeTimer
+    interval: 2500
+    onTriggered: root.notice = ""
+  }
+
+  Process {
+    id: captureProc
+    property string kind: ""
+    property string result: ""
+
+    stdout: StdioCollector {
+      onStreamFinished: captureProc.result = text.trim()
+    }
+
+    onExited: function (exitCode) {
+      var path = captureProc.result
+      captureProc.result = ""
+      root.capturing = false
+
+      if (exitCode === 0 && path) root.addAttachment(captureProc.kind, path)
+      // A cancelled region pick and an empty clipboard both land here. Neither
+      // is an error worth a dialog, but silence would read as a broken key.
+      else if (captureProc.kind === "clipboard") root.flash("clipboard is empty")
+      else if (exitCode !== 0) root.flash("capture cancelled")
+
+      Qt.callLater(function () { input.forceActiveFocus() })
+    }
   }
 
   // ------------------------------------------------------------ formatting
@@ -109,10 +216,19 @@ Item {
     if (root.ctxCwd)
       facts.push("  working dir:     " + root.ctxCwd)
 
+    // Attachments travel as paths, not as an upload protocol: every agent can
+    // already read a file it is pointed at, so this stays agent-agnostic.
+    for (var i = 0; i < root.attachments.length; i++) {
+      var a = root.attachments[i]
+      facts.push("  attached (" + a.kind + "):  " + a.path)
+    }
+
     if (facts.length) {
       lines.push("")
       lines.push("Context captured on this Omarchy machine when I asked:")
       lines.push(facts.join("\n"))
+      if (root.attachments.length)
+        lines.push("\nRead the attached files listed above before answering.")
     }
     return lines.join("\n")
   }
@@ -142,7 +258,7 @@ Item {
 
   PanelWindow {
     id: panel
-    visible: root.opened
+    visible: root.opened && !root.capturing
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "omarchy-ask"
@@ -246,8 +362,28 @@ Item {
 
             Keys.priority: Keys.BeforeItem
             Keys.onPressed: function (event) {
+              var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+              var shift = (event.modifiers & Qt.ShiftModifier) !== 0
+
               if (event.key === Qt.Key_Escape) {
                 root.dismiss()
+                event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_S) {
+                root.captureWindow()
+                event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_R) {
+                root.captureRegion()
+                event.accepted = true
+              } else if (ctrl && shift && event.key === Qt.Key_V) {
+                // Ctrl+Shift+V attaches; plain Ctrl+V stays paste-into-the-field,
+                // which is what a text box is expected to do.
+                root.attachClipboard()
+                event.accepted = true
+              } else if (ctrl && shift && event.key === Qt.Key_Backspace && root.attachments.length) {
+                // Shift is not optional here: plain Ctrl+Backspace has to stay
+                // "delete the previous word", which a composer needs far more
+                // often than it needs to drop an attachment.
+                root.removeAttachment(root.attachments.length - 1)
                 event.accepted = true
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 // Ctrl+Enter inserts a newline; bare Enter and Shift+Enter
@@ -274,9 +410,18 @@ Item {
             model: {
               var chips = []
               if (root.ctxClass)
-                chips.push({ glyph: "", label: root.ctxClass, hint: root.ctxTitle })
+                chips.push({ glyph: "", label: root.ctxClass, index: -1 })
               if (root.ctxCwd)
-                chips.push({ glyph: "", label: root.prettyPath(root.ctxCwd), hint: "" })
+                chips.push({ glyph: "", label: root.prettyPath(root.ctxCwd), index: -1 })
+
+              // Attachments carry an index so their chip can remove them.
+              // Automatic context has index -1: it says where the question came
+              // from, and is not the user's to curate.
+              for (var i = 0; i < root.attachments.length; i++) {
+                var a = root.attachments[i]
+                chips.push({ glyph: a.kind === "clipboard" ? "\uf0ea" : "\uf03e",
+                             label: a.label, index: i })
+              }
               return chips
             }
 
@@ -320,12 +465,44 @@ Item {
                   width: Math.min(implicitWidth, Style.space(260))
                   anchors.verticalCenter: parent.verticalCenter
                 }
+
+                // Only attachments get a remove affordance. Automatic context
+                // is a description of where the question came from, not a list
+                // the user is meant to prune.
+                Text {
+                  visible: chip.modelData.index >= 0
+                  text: "\u00d7"
+                  color: root.foreground
+                  opacity: removeArea.containsMouse ? 1 : 0.45
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  anchors.verticalCenter: parent.verticalCenter
+
+                  MouseArea {
+                    id: removeArea
+                    anchors.fill: parent
+                    anchors.margins: -Style.spacing.xs
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.removeAttachment(chip.modelData.index)
+                  }
+                }
               }
             }
           }
         }
 
         // ---------------------------------------------------------- footer
+        Text {
+          width: parent.width
+          visible: root.notice !== ""
+          text: root.notice
+          color: Color.accent
+          opacity: 0.8
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
         Rectangle {
           width: parent.width
           height: Style.spacing.hairline
@@ -340,7 +517,9 @@ Item {
           Repeater {
             model: [
               { keys: ["enter"], label: "send" },
-              { keys: ["ctrl", "enter"], label: "newline" },
+              { keys: ["ctrl", "s"], label: "window" },
+              { keys: ["ctrl", "r"], label: "region" },
+              { keys: ["ctrl", "shift", "v"], label: "clipboard" },
               { keys: ["esc"], label: "close" }
             ]
 

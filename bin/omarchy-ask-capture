@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# omarchy:summary=Capture an attachment for the ask overlay
+# omarchy:args=window <geometry> | region | clipboard
+# omarchy:hidden=true
+
+# Produces one attachment file and prints its path. Prints nothing and exits
+# non-zero when there is nothing to attach (selection cancelled, empty
+# clipboard), which the overlay reads as "leave the composer alone".
+#
+# The overlay hides itself before calling the screen-capturing modes: it is an
+# Overlay-layer surface covering the screen, so anything it does not step out
+# of the way for would be a screenshot of the ask card itself.
+
+set -uo pipefail
+
+DIR="${XDG_RUNTIME_DIR:-/tmp}/omarchy-ask"
+mkdir -p "$DIR" || exit 1
+
+stamp() { date +'%Y%m%d-%H%M%S-%N' | cut -c1-19; }
+
+# The overlay sets itself invisible before calling us, but a Wayland surface is
+# not gone the instant the client asks: the compositor still has to commit a
+# frame without it. Capturing immediately catches the card mid-teardown and
+# bakes a ghost of it into the screenshot (observed, not theorised). One short
+# settle beats a screenshot of our own UI.
+settle() { sleep 0.15; }
+
+mode="${1:-}"
+[[ -n $mode ]] || {
+  echo "Usage: omarchy-ask-capture <window <geometry>|region|clipboard>" >&2
+  exit 1
+}
+shift
+
+case "$mode" in
+  window)
+    geometry="${1:-}"
+    [[ -n $geometry ]] || exit 1
+    settle
+    out="$DIR/window-$(stamp).png"
+    grim -g "$geometry" "$out" || exit 1
+    echo "$out"
+    ;;
+
+  region)
+    # omarchy-capture-region owns the frozen-screen picker, so the selection
+    # UX here is identical to Super+Shift+S rather than a second, subtly
+    # different slurp.
+    # Settle before the picker, not just before grim: omarchy-capture-region
+    # freezes the screen first, so a card still on screen would be frozen into
+    # the very image the user selects from.
+    settle
+    geometry=$(omarchy-capture-region region) || exit 1
+    [[ -n $geometry ]] || exit 1
+    out="$DIR/region-$(stamp).png"
+    grim -g "$geometry" "$out" || exit 1
+    echo "$out"
+    ;;
+
+  clipboard)
+    types=$(wl-paste --list-types 2>/dev/null) || exit 1
+    [[ -n $types ]] || exit 1
+
+    # An image on the clipboard is worth attaching as a file; text is worth
+    # attaching as text. Checking the offered types is the only way to tell,
+    # since wl-paste happily prints binary at you either way.
+    if image_type=$(grep -m1 '^image/' <<<"$types"); then
+      ext="${image_type#image/}"
+      [[ $ext == "jpeg" ]] && ext="jpg"
+      case "$ext" in png | jpg | webp | gif | bmp) ;; *) ext="png" ;; esac
+      out="$DIR/clipboard-$(stamp).$ext"
+      wl-paste --type "$image_type" >"$out" 2>/dev/null || exit 1
+      [[ -s $out ]] || { rm -f "$out"; exit 1; }
+    else
+      out="$DIR/clipboard-$(stamp).txt"
+      wl-paste --no-newline >"$out" 2>/dev/null || exit 1
+      [[ -s $out ]] || { rm -f "$out"; exit 1; }
+    fi
+    echo "$out"
+    ;;
+
+  *)
+    echo "Unknown mode: $mode" >&2
+    exit 1
+    ;;
+esac

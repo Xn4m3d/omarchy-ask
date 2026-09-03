@@ -63,7 +63,13 @@ payload=$(jq -nc \
        title: ($w.title // ""),
        address: ($w.address // ""),
        pid: ($w.pid // 0),
-       workspace: ($w.workspace.name // "")
+       workspace: ($w.workspace.name // ""),
+       # Recorded here so the overlay can screenshot that window later: by
+       # then the compositor considers the ask card active, and the geometry
+       # of "the active window" would be the card.
+       geometry: (if ($w.at and $w.size)
+                  then "\($w.at[0]),\($w.at[1]) \($w.size[0])x\($w.size[1])"
+                  else "" end)
      },
      cwd: $cwd
    }')
