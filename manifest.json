@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "xn4m3d.ask",
+  "name": "Ask",
+  "version": "0.1.0",
+  "author": "Xn4m3d",
+  "license": "MIT",
+  "description": "Ask the default coding agent anything, from anywhere, with the context of what you were looking at.",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Ask.qml"
+  }
+}
