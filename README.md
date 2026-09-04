@@ -26,7 +26,9 @@ place.
 └────────────────────────────────────────────────────────────┘
 ```
 
-<!-- Screenshots and short screen recordings live in docs/ and get linked here. -->
+> **Screenshots and short screen recordings — soon.** The card streams, pulses
+> and animates, so it deserves moving images rather than a still; they will land
+> in [`docs/`](docs/), one per feature.
 
 ---
 
