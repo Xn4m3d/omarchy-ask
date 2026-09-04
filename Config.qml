@@ -21,7 +21,8 @@ Item {
     sendMode: "inline",
     agent: "",
     inlineTools: "Read Grep Glob WebFetch WebSearch",
-    animations: true
+    animations: true,
+    reasoningTokens: 0
   })
 
   property var values: ({})

@@ -86,6 +86,7 @@ context.
 | `↑` `↓` | recall previous prompts (from the first/last line of the box) |
 | `ctrl+h` | history — past turns, reopenable and resumable |
 | `ctrl+shift+c` | copy the answer (there is also a `copy` button beside the question) |
+| `ctrl+t` | fold the agent's reasoning open or shut |
 | `ctrl+c` | stop a running answer |
 | `ctrl+shift+backspace` | drop the last attachment |
 | `ctrl+,` | settings |
@@ -192,6 +193,30 @@ and unparseable here means attaching the wrong file. Symlinks are classified by
 what they point at (`-xtype`), so a link to a directory is enterable and a link
 to a file is attachable.
 
+## What the agent tells you about itself
+
+The header carries three facts, and none of them costs an extra call:
+
+- **The model**, taken from the `message_start` the agent already sends. It
+  only appears once the agent has said which one it is, so the line never
+  claims something it was not told. `claude-opus-5` renders as `opus-5` — in a
+  corner that already says "claude", the prefix is noise.
+- **Rate limits**, e.g. `5h 83% · 7d 9% · Pro`. Read, not fetched:
+  `omarchy-agent-usage-update` already writes a normalised record per agent to
+  `~/.local/state/omarchy/agents/usage/<id>.json` — the same records the
+  `omarchy.agents` bar widget draws. Watching that file is free, and works for
+  any agent that ships a collector. When a run is in flight, Claude's own
+  mid-stream `rate_limit_event` takes over, because it is current where the
+  file is only as fresh as the widget's timer.
+- **Reasoning**, when the agent emits any. It is folded away by default and
+  opens on `ctrl+t` or a click: the answer is what was asked for, and reasoning
+  that pushes it off screen is a cost, not a feature.
+
+Reasoning is off unless you turn it on (`show reasoning` in settings, which
+sets `MAX_THINKING_TOKENS`). Note that it *permits* extended thinking rather
+than forcing it — the model still decides whether to use it, so a simple
+question may answer with no reasoning block at all.
+
 ## Settings
 
 `ctrl+,` opens the settings screen. Space changes the selected value; booleans
@@ -205,6 +230,7 @@ flip, enums advance.
 | `agent` | `""` | force an agent for the inline path; empty follows `omarchy default agent` |
 | `inlineTools` | `Read Grep Glob WebFetch WebSearch` | tools the inline run may use |
 | `animations` | `true` | entrance, activity pulse, streaming cursor |
+| `reasoningTokens` | `0` | thinking budget for the inline run; `0` disables it |
 
 They live in `~/.config/omarchy/ask.json`, deliberately outside this checkout:
 `omarchy plugin update` fast-forwards the plugin directory and would walk over

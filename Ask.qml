@@ -70,8 +70,12 @@ Item {
   }
   readonly property bool inlineAvailable: Agents.supportsInline(root.effectiveAgent)
 
+  property string model: ""
+  property bool thinkingOpen: false
+
   Config { id: config }
   History { id: history }
+  Usage { id: usage; agent: root.effectiveAgent }
 
   // Shares the [menu] surface tokens, so a theme that styles the launcher
   // styles this too. Nothing here is a literal color.
@@ -329,6 +333,15 @@ Item {
 
   // ------------------------------------------------------------ formatting
 
+  // "claude-opus-5" in a corner is mostly the word "claude" again, which the
+  // line already says. Keep the half that actually varies.
+  function shortModel(id) {
+    var m = String(id || "")
+    m = m.replace(/^(claude|grok|gpt|gemini)[-_]/, "")
+    m = m.replace(/-\d{8}$/, "")
+    return m
+  }
+
   // ~/foo reads better than /home/user/foo in a chip that has to stay short.
   function prettyPath(path) {
     if (!path) return ""
@@ -395,6 +408,7 @@ Item {
 
     root.answer = ""
     root.thinking = ""
+    root.thinkingOpen = false
     root.status = "thinking"
     root.runState = "running"
 
@@ -413,7 +427,8 @@ Item {
       prompt: root.composePrompt(),
       cwd: root.ctxCwd,
       sessionId: root.sessionId,
-      allowedTools: String(config.get("inlineTools") || Agents.READ_ONLY_TOOLS)
+      allowedTools: String(config.get("inlineTools") || Agents.READ_ONLY_TOOLS),
+      reasoningTokens: Number(config.get("reasoningTokens") || 0)
     })
     if (root.ctxCwd) runProc.workingDirectory = root.ctxCwd
     runProc.running = true
@@ -546,6 +561,11 @@ Item {
 
         if (ev.kind === "session") {
           root.sessionId = ev.sessionId
+        } else if (ev.kind === "model") {
+          root.model = ev.text
+        } else if (ev.kind === "rate") {
+          usage.livePercent = ev.percent
+          usage.liveWindow = ev.window
         } else if (ev.kind === "delta") {
           root.answer += ev.text
           root.status = ""
@@ -718,14 +738,35 @@ Item {
             }
           }
 
-          Text {
+          Column {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: root.agent || "no default agent"
-            color: root.agent ? Color.accent : root.foreground
-            opacity: root.agent ? 1 : 0.5
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
+            spacing: 0
+
+            Text {
+              anchors.right: parent.right
+              // The model only shows once the agent has said which one it is,
+              // so the line never claims something it has not been told.
+              text: {
+                var name = root.effectiveAgent || "no default agent"
+                if (root.model) name += " · " + root.shortModel(root.model)
+                return name
+              }
+              color: root.effectiveAgent ? Color.accent : root.foreground
+              opacity: root.effectiveAgent ? 1 : 0.5
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              anchors.right: parent.right
+              visible: usage.known
+              text: usage.summary + (usage.tierLabel ? " · " + usage.tierLabel : "")
+              color: root.foreground
+              opacity: 0.4
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
           }
         }
 
@@ -897,6 +938,9 @@ Item {
                 // losing a paid-for answer to a reflex keypress is the whole
                 // problem this is meant to remove. Ctrl+C actually stops one.
                 root.dismiss()
+                event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_T && root.thinking) {
+                root.thinkingOpen = !root.thinkingOpen
                 event.accepted = true
               } else if (ctrl && shift && event.key === Qt.Key_C) {
                 // Ctrl+Shift+C is copy in every terminal on this desktop, and
@@ -1147,11 +1191,62 @@ Item {
                 }
               }
 
+              // Status doubles as the disclosure for the reasoning. Folded by
+              // default: the answer is what was asked for, and reasoning that
+              // pushes it off screen is a cost, not a feature.
+              Item {
+                width: parent.width
+                visible: root.status !== "" || root.thinking !== ""
+                implicitHeight: statusRow.implicitHeight
+
+                Row {
+                  id: statusRow
+                  spacing: Style.spacing.xs
+
+                  Text {
+                    text: root.thinking
+                          ? (root.thinkingOpen ? "\uf078" : "\uf054")
+                          : ""
+                    color: Color.accent
+                    opacity: 0.6
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    text: {
+                      if (root.status === "thinking") return "thinking…"
+                      if (root.status) return root.status + "…"
+                      return root.thinkingOpen ? "reasoning" : "reasoning available"
+                    }
+                    color: Color.accent
+                    opacity: 0.7
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  enabled: root.thinking !== ""
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.thinkingOpen = !root.thinkingOpen
+                }
+              }
+
+              // The reasoning itself, offset and dimmed so it never reads as
+              // the answer.
               Text {
-                visible: root.status !== ""
-                text: root.status === "thinking" ? "thinking…" : (root.status + "…")
-                color: Color.accent
-                opacity: 0.7
+                width: parent.width
+                visible: root.thinkingOpen && root.thinking !== ""
+                text: root.thinking
+                color: root.foreground
+                opacity: 0.45
+                wrapMode: Text.Wrap
+                leftPadding: Style.spacing.md
+                bottomPadding: Style.spacing.xs
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -1270,6 +1365,7 @@ Item {
               }]
               hints.push({ keys: ["shift", "enter"], label: "terminal" })
               if (root.answer) hints.push({ keys: ["ctrl", "shift", "c"], label: "copy" })
+              if (root.thinking) hints.push({ keys: ["ctrl", "t"], label: "reasoning" })
               if (root.runState === "idle") {
                 hints.push({ keys: ["ctrl", "s"], label: "window" })
                 hints.push({ keys: ["ctrl", "r"], label: "region" })

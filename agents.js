@@ -13,6 +13,8 @@
 //   "delta"    { text }        text to append to the answer
 //   "thinking" { text }        reasoning, rendered dimmed and discarded on turn end
 //   "tool"     { text }        a tool the agent reached for, shown as status
+//   "model"     { text }        which model is answering
+//   "rate"      { percent, window, resetsAt }  rate-limit state, mid-stream
 //   "done"     { text }        the turn finished; text is the final answer if we
 //                              never saw deltas
 //   "error"    { text }        the agent reported a failure
@@ -42,6 +44,25 @@ function parseAnthropicEnvelope(line) {
 
   if (m.type === "system" && m.subtype === "init" && m.session_id)
     return { kind: "session", sessionId: String(m.session_id) }
+
+  // The model is announced once per turn, at the top of the message.
+  if (m.type === "stream_event" && m.event && m.event.type === "message_start"
+      && m.event.message && m.event.message.model)
+    return { kind: "model", text: String(m.event.message.model) }
+
+  // Claude reports its own rate-limit state mid-stream. Free, current, and
+  // more up to date than the usage file Omarchy refreshes on a timer.
+  if (m.type === "rate_limit_event" && m.rate_limit_info) {
+    var info = m.rate_limit_info
+    if (typeof info.utilization === "number")
+      return {
+        kind: "rate",
+        percent: info.utilization,
+        window: String(info.rateLimitType || ""),
+        resetsAt: Number(info.resetsAt || 0)
+      }
+    return null
+  }
 
   if (m.type === "stream_event" && m.event) {
     var ev = m.event
@@ -77,13 +98,20 @@ function parseAnthropicEnvelope(line) {
 var claude = {
   id: "claude",
   argv: function (opts) {
-    var a = ["claude", "-p", opts.prompt,
+    // Extended thinking is off unless asked for: it costs tokens and latency
+    // on questions that mostly do not need it. Passed through `env` rather
+    // than a Process environment property, which keeps this a plain argv.
+    var a = []
+    if (opts.reasoningTokens > 0)
+      a = ["env", "MAX_THINKING_TOKENS=" + opts.reasoningTokens]
+
+    a = a.concat(["claude", "-p", opts.prompt,
              "--output-format", "stream-json",
              "--verbose",
              "--include-partial-messages",
              // Without this, a permission prompt in --print mode has nobody to
              // answer it and the run hangs instead of declining.
-             "--permission-prompts", "none"]
+             "--permission-prompts", "none"])
     if (opts.allowedTools) a.push("--allowed-tools", opts.allowedTools)
     if (opts.sessionId) a.push("--resume", opts.sessionId)
     return a

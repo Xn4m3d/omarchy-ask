@@ -42,6 +42,11 @@ Column {
       help: "empty follows omarchy default agent; the terminal path always does"
     },
     {
+      key: "reasoningTokens",
+      label: "show reasoning",
+      help: "ask the agent to think out loud; costs tokens and time"
+    },
+    {
       key: "animations",
       label: "animations",
       help: "card entrance, activity pulse, streaming cursor"
@@ -60,6 +65,7 @@ Column {
     var v = root.config.get(key)
     if (key === "captureWindow" || key === "captureCwd" || key === "animations")
       return v ? "on" : "off"
+    if (key === "reasoningTokens") return Number(v) > 0 ? (Number(v) + " tokens") : "off"
     if (key === "agent") return v ? v : "follow default" + (root.agent ? " (" + root.agent + ")" : "")
     return String(v)
   }
@@ -71,6 +77,10 @@ Column {
     if (!root.config) return
     if (key === "captureWindow" || key === "captureCwd" || key === "animations") {
       root.config.set(key, !root.config.get(key))
+    } else if (key === "reasoningTokens") {
+      var steps = [0, 4000, 8000, 16000]
+      var i = steps.indexOf(Number(root.config.get(key) || 0))
+      root.config.set(key, steps[(i + 1) % steps.length])
     } else if (key === "sendMode") {
       root.config.set(key, root.config.get(key) === "inline" ? "terminal" : "inline")
     } else if (key === "agent") {
