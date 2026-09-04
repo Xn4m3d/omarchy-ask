@@ -156,6 +156,10 @@ The session id is what makes this a continuation rather than a re-ask. A turn
 that has none — cancelled early, or run by an agent without adapter support —
 falls back to re-sending the prompt rather than issuing a broken resume.
 
+Closing always lands you back on the composer next time. A sub-view left open
+when the card closed would otherwise reappear on the next summon while the
+keyboard went to the hidden text box behind it — visible, and deaf.
+
 ## The file picker
 
 `ctrl+o` opens a keyboard-driven picker, starting in the directory the question

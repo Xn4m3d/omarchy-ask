@@ -100,7 +100,7 @@ Item {
     // discarding work you already paid for.
     if (root.runState === "running") {
       root.opened = true
-      Qt.callLater(function () { input.forceActiveFocus() })
+      Qt.callLater(function () { root.focusActiveSurface() })
       return
     }
 
@@ -110,7 +110,7 @@ Item {
       root.showTurn(0)
       root.opened = true
       agentProbe.running = true
-      Qt.callLater(function () { input.forceActiveFocus() })
+      Qt.callLater(function () { root.focusActiveSurface() })
       return
     }
 
@@ -118,7 +118,7 @@ Item {
     root.resetComposer()
     root.opened = true
     agentProbe.running = true
-    Qt.callLater(function () { input.forceActiveFocus() })
+    Qt.callLater(function () { root.focusActiveSurface() })
   }
 
   // A fresh question is a fresh conversation: dropping the session id is what
@@ -150,17 +150,32 @@ Item {
     root.attachments = []
     root.status = ""
     root.runState = t.answer ? "done" : "idle"
-    Qt.callLater(function () { input.forceActiveFocus() })
+    Qt.callLater(function () { root.focusActiveSurface() })
   }
 
   function close() {
     root.opened = false
+    // Sub-views do not survive a close. Reopening lands on the composer, the
+    // one state where every key does what the footer says it does.
+    root.historyOpen = false
+    root.pickerOpen = false
+    root.settingsOpen = false
   }
 
   function dismiss() {
-    root.opened = false
+    root.close()
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "xn4m3d.ask")
+  }
+
+  // Whichever surface is showing owns the keyboard. Routing focus through one
+  // place is what keeps a sub-view from being visible while a hidden TextArea
+  // holds the focus — the card looks alive and answers nothing.
+  function focusActiveSurface() {
+    if (root.historyOpen) historyKeys.forceActiveFocus()
+    else if (root.pickerOpen) pickerKeys.forceActiveFocus()
+    else if (root.settingsOpen) settingsKeys.forceActiveFocus()
+    else input.forceActiveFocus()
   }
 
   function applyPayload(payloadJson) {
@@ -280,7 +295,7 @@ Item {
       else if (captureProc.kind === "clipboard") root.flash("clipboard is empty")
       else if (exitCode !== 0) root.flash("capture cancelled")
 
-      Qt.callLater(function () { input.forceActiveFocus() })
+      Qt.callLater(function () { root.focusActiveSurface() })
     }
   }
 
@@ -370,10 +385,7 @@ Item {
   // list are two different key handlers, and a hidden TextArea keeps nothing.
   function toggleSettings() {
     root.settingsOpen = !root.settingsOpen
-    Qt.callLater(function () {
-      if (root.settingsOpen) settingsKeys.forceActiveFocus()
-      else input.forceActiveFocus()
-    })
+    Qt.callLater(function () { root.focusActiveSurface() })
   }
 
   // Up-arrow recalls previous prompts, the way a shell does — but only from
@@ -411,10 +423,7 @@ Item {
   function toggleHistory() {
     root.historyOpen = !root.historyOpen
     if (root.historyOpen) historyView.index = 0
-    Qt.callLater(function () {
-      if (root.historyOpen) historyKeys.forceActiveFocus()
-      else input.forceActiveFocus()
-    })
+    Qt.callLater(function () { root.focusActiveSurface() })
   }
 
   // Hand a recorded session to a real terminal. The agent's own --resume is
@@ -446,10 +455,7 @@ Item {
       filePicker.startDir = root.ctxCwd || Quickshell.env("HOME")
       filePicker.start()
     }
-    Qt.callLater(function () {
-      if (root.pickerOpen) pickerKeys.forceActiveFocus()
-      else input.forceActiveFocus()
-    })
+    Qt.callLater(function () { root.focusActiveSurface() })
   }
 
   // Called once a turn stops, however it stopped. Persists the answer, and
@@ -687,7 +693,7 @@ Item {
             onChosen: function (turnIndex) {
               root.showTurn(turnIndex)
               root.historyOpen = false
-              Qt.callLater(function () { input.forceActiveFocus() })
+              Qt.callLater(function () { root.focusActiveSurface() })
             }
             onResumeInTerminal: function (turnIndex) { root.resumeTurnInTerminal(turnIndex) }
           }
