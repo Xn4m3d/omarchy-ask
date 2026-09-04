@@ -1,226 +1,148 @@
 # ask
 
-A composer for your default coding agent, summoned from anywhere with
-`SUPER+Q`.
+**Ask your coding agent anything, from anywhere, without losing what you were doing.**
 
-Omarchy already knows how to hand an agent a pre-filled prompt — that is what
-the "Process crashed:" notification does through `omarchy-agent-crash`. This
-generalizes it: one keypress opens a card, you type a question, and it goes to
-whichever agent `omarchy default agent` points at, along with the context of
-what you were actually looking at.
+`SUPER+Q` opens a card over whatever is on screen. Type a question. It goes to
+your default Omarchy agent — with the window you were looking at, the directory
+you were in, and anything you chose to attach — and the answer streams back in
+place.
 
 ```
-┌──────────────────────────────────────────┐
-│ ● ask                             claude │
-│ ┌──────────────────────────────────────┐ │
-│ │ pourquoi mon build casse ?           │ │
-│ └──────────────────────────────────────┘ │
-│  foot    ~/Projects/thing              │
-│ ──────────────────────────────────────── │
-│ enter send   ctrl enter newline  esc close│
-└──────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│ ● ask                                       claude · opus-5│
+│                                        5h 83% · 7d 9% · Pro│
+│  ┌───────────────────────────────────────────────────────┐ │
+│  │ why is this build failing?                            │ │
+│  └───────────────────────────────────────────────────────┘ │
+│  [win] foot   [dir] ~/Projects/api   [img] region shot ×   │
+│ ────────────────────────────────────────────────────────── │
+│  why is this build failing?                        ┌──────┐│
+│                                                    │ copy ││
+│ ▎Your lockfile is out of sync with package.json.   └──────┘│
+│ ▎Run `bun install` to regenerate it — the CI image         │
+│ ▎pins bun 1.1, the lockfile was written by 1.2.▋           │
+│ ────────────────────────────────────────────────────────── │
+│ [enter] follow up  [shift][enter] terminal  [esc] close    │
+└────────────────────────────────────────────────────────────┘
 ```
+
+<!-- Screenshots and short screen recordings live in docs/ and get linked here. -->
+
+---
 
 ## Install
 
 ```bash
 omarchy plugin add https://github.com/Xn4m3d/omarchy-ask.git --enable --yes
+ln -sf ~/.config/omarchy/plugins/xn4m3d.ask/bin/omarchy-ask ~/.local/bin/omarchy-ask
 ```
 
-Then bind it. In `~/.config/hypr/bindings.lua`:
+Then one line in `~/.config/hypr/bindings.lua`:
 
 ```lua
 o.bind("SUPER + Q", "Ask agent", "omarchy-ask")
 ```
 
-`bin/omarchy-ask` has to be on `PATH` — symlink it into `~/.local/bin`:
+That is the whole installation. **No package to install, no service to enable,
+no API key to paste.**
 
-```bash
-ln -sf ~/.config/omarchy/plugins/xn4m3d.ask/bin/omarchy-ask ~/.local/bin/omarchy-ask
-```
+## Why there is nothing to set up
 
-## How it works
+On Omarchy every moving part this needs is already running. `ask` is glue, not
+a stack:
 
-The overlay lives inside the already-running `omarchy-shell` Quickshell
-process, so summoning it is an IPC call into something warm rather than a cold
-start.
-
-```
-SUPER+Q → omarchy-ask → omarchy-shell shell toggle xn4m3d.ask '<payload>'
-                                             └→ Ask.qml open(payload)
-```
-
-**Context is collected by the wrapper, before the IPC call.** This is the one
-structural constraint: as soon as the layer-shell card takes keyboard focus,
-`hyprctl activewindow` no longer describes what the user was looking at. So
-`bin/omarchy-ask` gathers the facts first and passes them along as JSON.
-
-What it collects today:
-
-| Fact | How |
+| What it needs | Already on your machine |
 |---|---|
-| Window class, title, address | `hyprctl activewindow -j` |
-| Working directory | first direct child of the window pid, then `/proc/<pid>/cwd` |
+| A QML host that is already warm | `quickshell` — a direct dependency of `omarchy` |
+| Routing a prompt to *your* agent | `omarchy-agent`, `omarchy default agent` |
+| A frozen-screen region picker | `omarchy-capture-region` — the same UX as `SUPER+SHIFT+S` |
+| Screenshots and clipboard | `grim`, `slurp`, `wl-clipboard` — all in `omarchy-base.packages` |
+| Rate-limit numbers | `omarchy-agent-usage-update`, whose records the bar widget already draws |
+| Desktop notifications | `omarchy-notification-send` |
+| JSON on the shell side | `jq` — a direct dependency of `omarchy` |
+| Theme, spacing, type | the shell's own `qs.Commons` singletons |
+| Install and update | `omarchy plugin add` / `update` |
 
-The cwd trick is what makes a question actionable: for a terminal, the window's
-pid is the terminal, and its first child is the shell whose cwd you care about.
-Walking the tree to its deepest leaf looks more thorough but lands on
-short-lived processes whose `/proc` entry is often already gone.
+What `ask` adds is **~2,700 lines of QML and three bash helpers**. It never
+talks to a model API itself — it drives the agent CLI you already signed in to.
 
-The screensaver and lock surfaces are filtered out — they are what the
-compositor reports while they are up, but the window underneath is what you
-meant, and it is no longer reachable. No window context beats confidently wrong
-context.
+Because it leans on `omarchy-agent`, it works with **every agent Omarchy
+supports** (claude, codex, grok, gemini, copilot, opencode, crush, pi).
+Streaming the answer *inside the card* needs a per-agent adapter; everything
+else falls back to a terminal, which is generic by construction — see
+[Agent support](#agent-support).
+
+## What it does
+
+**It brings the context with it.** The class and title of the window you came
+from, and — for a terminal — the working directory, resolved from the shell
+running inside it. The agent starts *in* that directory, so "why is this
+failing?" is a question about your project rather than about nothing.
+
+**It attaches what you point at.** `ctrl+s` shoots the window you came from,
+`ctrl+r` picks a screen region through Omarchy's own frozen-screen picker,
+`ctrl+shift+v` takes the clipboard (image or text), `ctrl+o` opens a
+keyboard-driven file picker. Each becomes a removable chip and travels to the
+agent **as a file path** — so it works identically for every agent, with no
+upload protocol anywhere.
+
+Nothing is attached without a keystroke. A clipboard that shipped with every
+question would eventually ship a password.
+
+**It answers in place, or hands off.** `enter` streams the answer into the card
+as rendered markdown. `shift+enter` sends the same question to a real agent
+terminal instead. The inline path is **read-only** — a global hotkey that can
+auto-approve writes from anywhere is not a trade worth making — so anything that
+changes files belongs in the terminal, where approvals are in front of you.
+
+**It never loses an answer.** Closing the card does not cancel the agent. The
+turn keeps running, the answer is recorded, and a notification brings you back
+to it. `ctrl+c` stops a run when that is what you actually mean.
+
+**It remembers.** `↑` recalls previous prompts, shell-style. `ctrl+h` opens
+every past turn — each carrying the agent's **session id**, so reopening one
+continues that conversation instead of re-asking it, and `shift+enter` resumes
+it in a terminal through the agent's own `--resume`.
+
+**It says what it is doing.** Which model answered, how much of your rate limit
+is gone, and — folded away until you want it — the agent's reasoning.
 
 ## Keys
 
 | Key | Does |
 |---|---|
-| `enter` | send — streams the answer in the card |
+| `SUPER+Q` | open / close |
+| `enter` | send — streams the answer here (or follow up, once there is one) |
 | `shift+enter` | send to a terminal agent instead |
 | `ctrl+enter` | newline |
+| `↑` `↓` | recall previous prompts, from the first/last line of the box |
 | `ctrl+s` | attach a shot of the window you came from |
-| `ctrl+r` | attach a screen region (Omarchy's frozen-screen picker) |
+| `ctrl+r` | attach a screen region |
 | `ctrl+shift+v` | attach the clipboard (image or text) |
 | `ctrl+o` | attach a file — opens the picker |
-| `↑` `↓` | recall previous prompts (from the first/last line of the box) |
-| `ctrl+h` | history — past turns, reopenable and resumable |
-| `ctrl+shift+c` | copy the answer (there is also a `copy` button beside the question) |
-| `ctrl+t` | fold the agent's reasoning open or shut |
-| `ctrl+c` | stop a running answer |
 | `ctrl+shift+backspace` | drop the last attachment |
+| `ctrl+shift+c` | copy the answer (a `copy` button sits beside the question too) |
+| `ctrl+t` | fold the agent's reasoning open or shut |
+| `ctrl+h` | history |
 | `ctrl+,` | settings |
+| `ctrl+c` | stop a running answer |
 | `esc` | close — the agent keeps running |
 
-Attachments show up as chips and travel to the agent **as file paths**: every
-agent can already read a file it is pointed at, so nothing here needs a
-per-agent upload protocol.
+## Agent support
 
-Nothing is attached without a keystroke. A clipboard that shipped with every
-question would eventually ship a password.
-
-## Sending
-
-Either way, the prompt is your text plus a short context block, shaped like the
-one `omarchy-agent-crash` builds — plain facts under a heading, which every
-agent reads without special handling.
-
-`enter` streams the answer into the card. `shift+enter` sends the same
-question to a terminal instead, which is also where anything that needs to
-*change* something belongs: the inline path runs read-only
-(`--permission-prompts none` plus a tools allowlist), because a global hotkey
-that can auto-approve writes from anywhere is not a trade worth making.
-
-Sending empties the box and moves the question above the answer, so you can see
-what was asked while the box is already free for a follow-up. `enter` then
-continues that same conversation — the agent's session id is reused — rather
-than re-asking. `↑` brings the question back if you want to edit and re-send it.
-
-Agents whose streaming format has an adapter answer inline; the rest fall back
-to the terminal rather than showing a card that never fills in.
-
-| Agent | Inline | Note |
+| Agent | Inline streaming | Notes |
 |---|---|---|
-| `claude` | yes | verified against Claude Code's `stream-json` |
-| `grok` | yes | same Anthropic envelope; **not yet verified** — no signed-in CLI here |
-| everything else | no | terminal, via `omarchy-agent` |
+| `claude` | yes | verified end to end against Claude Code's `stream-json` |
+| `grok` | adapter written, **unverified** | same Anthropic envelope on paper; no signed-in CLI here to prove it |
+| everything else | no — terminal | via `omarchy-agent --prompt`, which works for all of them |
 
-The terminal path goes through `omarchy-agent --prompt`, which opens a window
-tagged `org.omarchy.agent`. When a working directory was captured, the agent
-starts **in** it: `omarchy-agent` redirects to `~/Work` when it starts from
-`$HOME`, so the directory has to be applied before it runs.
+Adding an agent is two pure functions in [`agents.js`](agents.js): `argv(opts)`
+and `parse(line)`. An unrecognised line returns `null` and is ignored — these
+formats gain event types over time, and an unknown line must never be fatal.
 
-## Nothing is lost when you close
+## Settings — `ctrl+,`
 
-Closing the card **never cancels the agent**. The turn keeps running, the
-answer is recorded, and when it lands on a closed card a notification says so —
-clicking it reopens the card on that answer (`omarchy-ask --last`).
-
-That is the whole point of `esc` not being a cancel key: losing an answer you
-already paid for, to a reflex keypress, is exactly the failure this is meant to
-remove. `ctrl+c` stops a run when you actually mean to.
-
-Every turn is recorded in `~/.local/state/omarchy/ask/history.json` — prompt,
-answer, agent, directory, and the agent's **session id** — capped at the last
-50. Delete the file to clear it.
-
-## History
-
-`↑` recalls previous prompts the way a shell does, but only from the first line
-of the box: below that, `↑` has to stay "move the cursor up" or a multi-line
-question becomes uneditable. Whatever you were typing is handed back when you
-walk `↓` out of history.
-
-`ctrl+h` opens the full history: past turns, newest first.
-
-| Key | Does |
-|---|---|
-| `enter` | reopen the turn — answer restored, session id restored, so Enter continues it |
-| `shift+enter` | resume that session in a terminal (`claude --resume <id>`) |
-| `esc` | back |
-
-The session id is what makes this a continuation rather than a re-ask. A turn
-that has none — cancelled early, or run by an agent without adapter support —
-falls back to re-sending the prompt rather than issuing a broken resume.
-
-Closing always lands you back on the composer next time. A sub-view left open
-when the card closed would otherwise reappear on the next summon while the
-keyboard went to the hidden text box behind it — visible, and deaf.
-
-## The file picker
-
-`ctrl+o` opens a keyboard-driven picker, starting in the directory the question
-came from — attaching a file from the project you were just looking at is the
-common case by a wide margin.
-
-| Key | Does |
-|---|---|
-| type | filter the listing |
-| `↑` `↓` (or `ctrl+p` / `ctrl+n`) | move |
-| `enter` | enter a directory, or attach a file |
-| `backspace` | trim the filter, or go up when it is empty |
-| `←` | go up |
-| `ctrl+h` | show hidden entries |
-| `esc` | back to the composer |
-
-It is built in rather than shelling out to a portal dialog: the card already
-owns keyboard focus, and handing that to a GTK file chooser would mean a second
-window, a second focus dance, and a theme that does not match.
-
-Listing goes through `bin/omarchy-ask-ls`, which uses `find -printf` rather
-than `ls -1`: a filename containing a newline makes `ls` output unparseable,
-and unparseable here means attaching the wrong file. Symlinks are classified by
-what they point at (`-xtype`), so a link to a directory is enterable and a link
-to a file is attachable.
-
-## What the agent tells you about itself
-
-The header carries three facts, and none of them costs an extra call:
-
-- **The model**, taken from the `message_start` the agent already sends. It
-  only appears once the agent has said which one it is, so the line never
-  claims something it was not told. `claude-opus-5` renders as `opus-5` — in a
-  corner that already says "claude", the prefix is noise.
-- **Rate limits**, e.g. `5h 83% · 7d 9% · Pro`. Read, not fetched:
-  `omarchy-agent-usage-update` already writes a normalised record per agent to
-  `~/.local/state/omarchy/agents/usage/<id>.json` — the same records the
-  `omarchy.agents` bar widget draws. Watching that file is free, and works for
-  any agent that ships a collector. When a run is in flight, Claude's own
-  mid-stream `rate_limit_event` takes over, because it is current where the
-  file is only as fresh as the widget's timer.
-- **Reasoning**, when the agent emits any. It is folded away by default and
-  opens on `ctrl+t` or a click: the answer is what was asked for, and reasoning
-  that pushes it off screen is a cost, not a feature.
-
-Reasoning is off unless you turn it on (`show reasoning` in settings, which
-sets `MAX_THINKING_TOKENS`). Note that it *permits* extended thinking rather
-than forcing it — the model still decides whether to use it, so a simple
-question may answer with no reasoning block at all.
-
-## Settings
-
-`ctrl+,` opens the settings screen. Space changes the selected value; booleans
-flip, enums advance.
+Space changes the selected value; booleans flip, enums advance.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -228,54 +150,85 @@ flip, enums advance.
 | `captureCwd` | `true` | resolve the terminal's directory and run the agent in it |
 | `sendMode` | `inline` | what plain `enter` does |
 | `agent` | `""` | force an agent for the inline path; empty follows `omarchy default agent` |
-| `inlineTools` | `Read Grep Glob WebFetch WebSearch` | tools the inline run may use |
-| `animations` | `true` | entrance, activity pulse, streaming cursor |
 | `reasoningTokens` | `0` | thinking budget for the inline run; `0` disables it |
+| `animations` | `true` | entrance, activity pulse, streaming cursor |
+| `inlineTools` | `Read Grep Glob WebFetch WebSearch` | tools the inline run may use |
 
-They live in `~/.config/omarchy/ask.json`, deliberately outside this checkout:
-`omarchy plugin update` fast-forwards the plugin directory and would walk over
-a config file kept inside it. Only changed keys are written.
+They live in `~/.config/omarchy/ask.json`, deliberately **outside** this
+checkout: `omarchy plugin update` fast-forwards the plugin directory and would
+walk over a config file kept inside it. Only changed keys are written.
 
-## Theming and motion
+## Tested, and not
 
-Every color and dimension comes from the shell's `qs.Commons` singletons —
-`Color.menu.*` for the surface, `Style.*` for spacing and type. There is not a
-single literal color in the QML, so the card follows whatever theme is active
-without any per-theme work.
+Built and exercised on a single machine. Being straight about which is which:
 
-That includes **live** theme changes: those singletons are file-watched, so
-`omarchy theme set …` restyles the card while it is open — surface, border,
-accent and all. Verified by switching themes with the card on screen and text
-in the box.
+**Verified by running it**
 
-Motion follows Omarchy rather than inventing its own feel:
+- Summon → type → send → answer, on Claude, repeatedly.
+- The agent really starts in the captured directory (checked through `/proc/<pid>/cwd`).
+- Attachments: window shot, region, clipboard text, file picker — files land,
+  chips appear, paths reach the prompt.
+- A window screenshot contains the window and **not** the ask card. This took a
+  fix: `grim` fired before the compositor had dropped our surface, and baked a
+  ghost of the card into the image.
+- Closing mid-run leaves the agent running and the answer recorded.
+- Follow-ups reuse the session id — the answer stays on topic when the question
+  no longer names the topic.
+- `ctrl+shift+c` really puts the answer on the clipboard.
+- Live theme switching restyles the open card (Solitude → Catppuccin → Gruvbox).
+- Empty history, empty directory, unreadable directory, and filenames with
+  spaces, accents and apostrophes.
+- Prompt quoting against `$VAR`, backticks, `$(…)` and apostrophes.
+- The adapter parser, unit-tested on real lines including malformed JSON.
 
-- **140ms / OutCubic** — the duration used most across the shell, and exactly
-  what `Ui/PopupCard.qml` fades on.
-- **No blur, no rounding of its own.** Omarchy ships both disabled; the card
-  stays as crisp as the rest of the desktop instead of arguing with it.
-- The entrance is a fade with 3% of scale and a 10px rise. Small on purpose: a
-  card that flies in from far away reads as slow the second time you see it.
+**Written but not observed**
 
-Three touches carry the state without adding chrome:
+- **Grok inline.** No signed-in xAI CLI on this machine, so the adapter has
+  never actually run.
+- **The `copy` button's click.** The shortcut is verified and the button calls
+  the same function, but there is no synthetic-mouse tool here — no click has
+  ever been sent to this card. It is the only untested *click* in the whole UI.
+- **The reasoning panel, end to end.** The parser is unit-tested, and
+  `MAX_THINKING_TOKENS` does produce `thinking_delta` from the CLI, but every
+  run through the UI answered without a reasoning block — so the rendered panel
+  has not been seen.
 
-- The **identity dot pulses** while the agent works — the activity light is the
-  mark itself, not a second thing to watch.
-- A **block cursor** sits at the end of the answer while it streams, placed by
-  `positionToRectangle` so it lands on the real last character.
-- An **accent rule** runs down the answer, marking it as the agent's voice
-  without drawing another box.
+**Out of scope for now**
 
-All of it is one setting: `animations`, on by default. Turning it off keeps the
-layout identical and drops the movement — including, always, during a screen
-capture, where a fading card would end up inside the screenshot.
+- Non-Hyprland compositors: context collection is `hyprctl`, by design.
+- Multi-monitor, and scale factors other than the one it was built on.
+- Codex: `codex exec --json` speaks its own event format and has no adapter yet.
 
-The answer is selectable, so a passage can be dragged out by hand. Clicking into
-it takes focus; click back in the box to keep typing. For the whole answer there
-is `ctrl+shift+c` — copy, in every terminal on this desktop — and a `copy`
-button parked on the right of the question line, where it can never sit on top
-of the text it copies. Both go through `wl-copy` the same way Omarchy's own
-panels do.
+## How it works
+
+The overlay lives inside the already-running `omarchy-shell` Quickshell process,
+so summoning it is an IPC call into something warm rather than a cold start.
+
+```
+SUPER+Q → omarchy-ask → omarchy-shell shell toggle xn4m3d.ask '<payload>'
+                                            └→ Ask.qml open(payload)
+```
+
+**Context is collected by the wrapper, before the IPC call.** That is the one
+structural constraint: as soon as the layer-shell card takes keyboard focus,
+`hyprctl activewindow` no longer describes what you were looking at. So
+`bin/omarchy-ask` gathers the facts first and hands them over as JSON — which
+also makes the whole thing drivable from a shell, with no keyboard involved.
+
+A few decisions worth knowing about:
+
+- **The cwd comes from the window pid's first child**, not from walking the
+  process tree to its deepest leaf: that lands on short-lived processes whose
+  `/proc` entry is often already gone.
+- **Listing uses `find -printf`, not `ls -1`** — a filename containing a newline
+  makes `ls` output unparseable, and unparseable here means attaching the wrong
+  file.
+- **Screenshots wait for the compositor** to commit a frame without our surface,
+  and animations are force-disabled during a capture.
+- **The screensaver and lock surfaces are filtered out** of the window context:
+  no context beats confidently wrong context.
+- **Motion matches Omarchy** — 140 ms / OutCubic, the duration the shell uses
+  most — with no blur and no extra rounding, because Omarchy ships both off.
 
 ## Hacking on it
 
@@ -290,8 +243,8 @@ appear. When a change seems not to apply:
 omarchy restart shell
 ```
 
-Third-party plugins run unsandboxed inside `omarchy-shell`. If a change breaks
-the shell, the way back is:
+Third-party plugins run unsandboxed inside `omarchy-shell`. The way back from a
+bad change:
 
 ```bash
 omarchy plugin disable xn4m3d.ask && omarchy restart shell
@@ -300,23 +253,18 @@ omarchy plugin disable xn4m3d.ask && omarchy restart shell
 Useful while iterating:
 
 ```bash
-# see the context without opening anything
+# the context, without opening anything
 omarchy-ask --print-context
 
-# drive the overlay by hand, with a made-up context
-omarchy-shell shell summon xn4m3d.ask '{"window":{"class":"foot","title":"x"},"cwd":"/tmp"}'
+# drive the card by hand, with a made-up context
+omarchy-shell shell summon xn4m3d.ask '{"window":{"class":"foot"},"cwd":"/tmp"}'
 omarchy-shell shell hide xn4m3d.ask
 
 # QML warnings land in the journal
 journalctl --user _PID=$(pgrep -f 'quickshell -n -p /usr/share/omarchy/shell') -f
 ```
 
-## Not there yet
-
-- **Grok inline is unverified.** The format matches Claude's on paper and the
-  adapter is written, but nothing here is signed in to xAI to prove it.
-- **Codex has no adapter.** `codex exec --json` speaks its own event format;
-  until someone writes that adapter, codex answers in a terminal.
+Built against **Omarchy 4.0.2** / **Hyprland 0.56.2**.
 
 ## License
 
