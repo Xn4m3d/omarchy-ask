@@ -203,17 +203,48 @@ flip, enums advance.
 | `sendMode` | `inline` | what plain `enter` does |
 | `agent` | `""` | force an agent for the inline path; empty follows `omarchy default agent` |
 | `inlineTools` | `Read Grep Glob WebFetch WebSearch` | tools the inline run may use |
+| `animations` | `true` | entrance, activity pulse, streaming cursor |
 
 They live in `~/.config/omarchy/ask.json`, deliberately outside this checkout:
 `omarchy plugin update` fast-forwards the plugin directory and would walk over
 a config file kept inside it. Only changed keys are written.
 
-## Theming
+## Theming and motion
 
 Every color and dimension comes from the shell's `qs.Commons` singletons —
 `Color.menu.*` for the surface, `Style.*` for spacing and type. There is not a
 single literal color in the QML, so the card follows whatever theme is active
 without any per-theme work.
+
+That includes **live** theme changes: those singletons are file-watched, so
+`omarchy theme set …` restyles the card while it is open — surface, border,
+accent and all. Verified by switching themes with the card on screen and text
+in the box.
+
+Motion follows Omarchy rather than inventing its own feel:
+
+- **140ms / OutCubic** — the duration used most across the shell, and exactly
+  what `Ui/PopupCard.qml` fades on.
+- **No blur, no rounding of its own.** Omarchy ships both disabled; the card
+  stays as crisp as the rest of the desktop instead of arguing with it.
+- The entrance is a fade with 3% of scale and a 10px rise. Small on purpose: a
+  card that flies in from far away reads as slow the second time you see it.
+
+Three touches carry the state without adding chrome:
+
+- The **identity dot pulses** while the agent works — the activity light is the
+  mark itself, not a second thing to watch.
+- A **block cursor** sits at the end of the answer while it streams, placed by
+  `positionToRectangle` so it lands on the real last character.
+- An **accent rule** runs down the answer, marking it as the agent's voice
+  without drawing another box.
+
+All of it is one setting: `animations`, on by default. Turning it off keeps the
+layout identical and drops the movement — including, always, during a screen
+capture, where a fading card would end up inside the screenshot.
+
+The answer is selectable, so it can be copied out. Clicking into it takes
+focus; click back in the box to keep typing.
 
 ## Hacking on it
 

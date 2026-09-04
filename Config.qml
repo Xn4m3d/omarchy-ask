@@ -20,7 +20,8 @@ Item {
     captureCwd: true,
     sendMode: "inline",
     agent: "",
-    inlineTools: "Read Grep Glob WebFetch WebSearch"
+    inlineTools: "Read Grep Glob WebFetch WebSearch",
+    animations: true
   })
 
   property var values: ({})

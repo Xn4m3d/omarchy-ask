@@ -90,6 +90,24 @@ Item {
   // is for.
   readonly property int maxAnswerHeight: Math.round(panel.height * 0.5)
 
+  // 0 closed, 1 open. Animating a number rather than toggling `visible`
+  // directly is what makes the exit visible at all: the window has to outlive
+  // the close by the length of the animation.
+  //
+  // 140ms / OutCubic is Omarchy's own tempo — it is the duration the shell
+  // uses most, and Ui/PopupCard.qml fades on exactly these numbers. Matching
+  // it matters more than picking something nicer in isolation.
+  readonly property bool animate: config.get("animations") !== false
+  property real reveal: (root.opened && !root.capturing) ? 1 : 0
+
+  Behavior on reveal {
+    // Never animate the way out of a screen capture: the helper waits a fixed
+    // 150ms for the surface to be gone, and a fade would still be on screen —
+    // straight back to photographing our own card.
+    enabled: root.animate && !root.capturing
+    NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+  }
+
   readonly property string homeDir: Quickshell.env("HOME")
 
   // ------------------------------------------------------------- lifecycle
@@ -589,7 +607,8 @@ Item {
 
   PanelWindow {
     id: panel
-    visible: root.opened && !root.capturing
+    // Outlives `opened` so the exit animation has something to draw on.
+    visible: (root.opened && !root.capturing) || root.reveal > 0.01
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "omarchy-ask"
@@ -600,6 +619,7 @@ Item {
     Rectangle {
       anchors.fill: parent
       color: root.scrim
+      opacity: root.reveal
     }
 
     MouseArea {
@@ -612,7 +632,22 @@ Item {
       width: root.cardWidth
       height: layout.implicitHeight + contentTopInset + contentBottomInset
       radius: root.cornerRadius
+
+      // Switching to settings or the picker resizes the card; easing that is
+      // the difference between "another view" and "it jumped". Never while an
+      // answer streams, though: the height changes on nearly every delta, and
+      // easing each one turns a growing card into a wobbling one.
+      Behavior on height {
+        enabled: root.animate && root.runState !== "running" && root.reveal > 0.99
+        NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+      }
       anchors.centerIn: parent
+
+      // Small numbers on purpose. A card that flies in from far away reads as
+      // slow the second time you see it; 3% and 10px read as "it landed".
+      opacity: root.reveal
+      scale: 0.97 + 0.03 * root.reveal
+      anchors.verticalCenterOffset: Math.round((1 - root.reveal) * Style.space(10))
       color: root.background
       borderSpec: root.borderSpec
       padding: Style.spacing.panelPadding
@@ -640,12 +675,27 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.spacing.sm
 
+            // The identity mark doubles as the activity light. A separate
+            // spinner would be a second thing to look at; this is already
+            // where the eye lands.
             Rectangle {
+              id: brandDot
               width: Style.space(6)
               height: width
               radius: width / 2
               anchors.verticalCenter: parent.verticalCenter
               color: Color.accent
+
+              SequentialAnimation on opacity {
+                running: root.runState === "running" && root.animate
+                loops: Animation.Infinite
+                alwaysRunToEnd: true
+                NumberAnimation { to: 0.25; duration: 620; easing.type: Easing.InOutSine }
+                NumberAnimation { to: 1.0; duration: 620; easing.type: Easing.InOutSine }
+              }
+
+              // The loop leaves opacity wherever it stopped, so put it back.
+              onOpacityChanged: if (root.runState !== "running" && opacity !== 1) opacity = 1
             }
 
             Text {
@@ -1048,18 +1098,74 @@ Item {
                 font.pixelSize: Style.font.caption
               }
 
-              Text {
+              Row {
                 width: parent.width
                 visible: root.answer !== ""
-                text: root.answer
+                spacing: Style.spacing.sm
+
+                // A quoted-passage rule rather than a box: it marks the answer
+                // as the agent's voice without drawing another rectangle.
+                Rectangle {
+                  width: Math.max(1, Style.space(2))
+                  height: answerText.implicitHeight
+                  color: root.runState === "error" ? Color.urgent : Color.accent
+                  opacity: 0.55
+                }
+
+                Item {
+                  width: parent.width - parent.spacing - Style.space(2)
+                  implicitHeight: answerText.implicitHeight
+
+                  // TextEdit, not Text: it can say where the last character
+                  // actually is (positionToRectangle), which is what puts the
+                  // stream cursor in the right place instead of guessing from
+                  // contentWidth. Read-only, and selectable so an answer can
+                  // be copied out — clicking into it takes focus, click back
+                  // in the box to keep typing.
+                  TextEdit {
+                    id: answerText
+                    width: parent.width
+                    readOnly: true
+                    selectByMouse: true
+                    text: root.answer
                 // MarkdownText is why the agent's lists, code spans and
                 // emphasis land as formatting instead of as literal asterisks.
                 textFormat: Text.MarkdownText
                 wrapMode: Text.Wrap
-                color: root.runState === "error" ? Color.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                onLinkActivated: function (link) { Quickshell.execDetached(["xdg-open", link]) }
+                    color: root.runState === "error" ? Color.urgent : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    onLinkActivated: function (link) { Quickshell.execDetached(["xdg-open", link]) }
+                  }
+
+                  // Sits at the end of the last line while text is arriving.
+                  // A terminal's own idiom, on a desktop that is mostly
+                  // terminals.
+                  Rectangle {
+                    id: streamCursor
+                    visible: root.runState === "running"
+
+                    // Recomputed on every delta: touching answerText.text is
+                    // what makes this binding depend on it.
+                    readonly property rect tail: {
+                      answerText.text
+                      return answerText.positionToRectangle(answerText.length)
+                    }
+
+                    width: Style.space(7)
+                    height: Math.max(Style.space(4), tail.height)
+                    color: Color.accent
+                    x: Math.min(tail.x, answerText.width - width)
+                    y: tail.y
+
+                    SequentialAnimation on opacity {
+                      running: root.runState === "running" && root.animate
+                      loops: Animation.Infinite
+                      NumberAnimation { to: 0.15; duration: 420 }
+                      NumberAnimation { to: 0.9; duration: 420 }
+                    }
+                  }
+                }
               }
             }
           }

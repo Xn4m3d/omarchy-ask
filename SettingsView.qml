@@ -42,6 +42,11 @@ Column {
       help: "empty follows omarchy default agent; the terminal path always does"
     },
     {
+      key: "animations",
+      label: "animations",
+      help: "card entrance, activity pulse, streaming cursor"
+    },
+    {
       key: "inlineTools",
       label: "inline tools",
       help: "tools the inline run may use; it never writes"
@@ -53,7 +58,8 @@ Column {
   function valueText(key) {
     if (!root.config) return ""
     var v = root.config.get(key)
-    if (key === "captureWindow" || key === "captureCwd") return v ? "on" : "off"
+    if (key === "captureWindow" || key === "captureCwd" || key === "animations")
+      return v ? "on" : "off"
     if (key === "agent") return v ? v : "follow default" + (root.agent ? " (" + root.agent + ")" : "")
     return String(v)
   }
@@ -63,7 +69,7 @@ Column {
   // in the file — better than a half-built text editor inside a popup.
   function cycle(key) {
     if (!root.config) return
-    if (key === "captureWindow" || key === "captureCwd") {
+    if (key === "captureWindow" || key === "captureCwd" || key === "animations") {
       root.config.set(key, !root.config.get(key))
     } else if (key === "sendMode") {
       root.config.set(key, root.config.get(key) === "inline" ? "terminal" : "inline")
