@@ -6,6 +6,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
+import "agents.js" as Agents
 
 // A composer for the default coding agent, summoned from anywhere.
 //
@@ -41,6 +42,14 @@ Item {
   property string agent: ""
   property string notice: ""
 
+  // Inline run state: "idle" | "running" | "done" | "error".
+  property string runState: "idle"
+  property string answer: ""
+  property string thinking: ""
+  property string status: ""
+  property string sessionId: ""
+  readonly property bool inlineAvailable: Agents.supportsInline(root.agent)
+
   // Shares the [menu] surface tokens, so a theme that styles the launcher
   // styles this too. Nothing here is a literal color.
   readonly property color background: Color.menu.background
@@ -53,6 +62,11 @@ Item {
 
   readonly property int cardWidth: Math.min(Style.space(620), panel.width - Style.gapsOut * 2)
 
+  // The answer grows the card, but never past half the screen: past that it
+  // stops being a glance and starts being a window, which is what Shift+Enter
+  // is for.
+  readonly property int maxAnswerHeight: Math.round(panel.height * 0.5)
+
   readonly property string homeDir: Quickshell.env("HOME")
 
   // ------------------------------------------------------------- lifecycle
@@ -61,6 +75,13 @@ Item {
     applyPayload(payloadJson)
     root.attachments = []
     root.notice = ""
+    // A fresh summon is a fresh conversation: dropping the session id is what
+    // stops yesterday's context from leaking into an unrelated question.
+    root.sessionId = ""
+    root.answer = ""
+    root.thinking = ""
+    root.status = ""
+    root.runState = "idle"
     root.opened = true
     agentProbe.running = true
     Qt.callLater(function () { input.forceActiveFocus() })
@@ -233,6 +254,104 @@ Item {
     return lines.join("\n")
   }
 
+  // ------------------------------------------------------------- inline run
+
+  function submitInline() {
+    var text = input.text.trim()
+    if (!text || root.runState === "running") return
+
+    var adapter = Agents.forAgent(root.agent)
+    // No adapter means no way to read this agent's output. Falling back to the
+    // terminal beats an empty card that never fills in.
+    if (!adapter) {
+      root.submitToTerminal()
+      return
+    }
+
+    root.answer = ""
+    root.thinking = ""
+    root.status = "thinking"
+    root.runState = "running"
+
+    runProc.adapter = adapter
+    runProc.command = adapter.argv({
+      prompt: root.composePrompt(),
+      cwd: root.ctxCwd,
+      sessionId: root.sessionId,
+      allowedTools: Agents.READ_ONLY_TOOLS
+    })
+    if (root.ctxCwd) runProc.workingDirectory = root.ctxCwd
+    runProc.running = true
+  }
+
+  function cancelRun() {
+    if (root.runState !== "running") return
+    runProc.running = false
+    root.runState = "done"
+    root.status = "cancelled"
+  }
+
+  // A follow-up reuses the session id the agent handed back, so the card keeps
+  // one conversation rather than starting a fresh one on every question.
+  function askAgain() {
+    root.submitInline()
+  }
+
+  Process {
+    id: runProc
+    property var adapter: null
+
+    stdout: SplitParser {
+      onRead: function (line) {
+        if (!runProc.adapter) return
+        var ev = runProc.adapter.parse(line)
+        if (!ev) return
+
+        if (ev.kind === "session") {
+          root.sessionId = ev.sessionId
+        } else if (ev.kind === "delta") {
+          root.answer += ev.text
+          root.status = ""
+        } else if (ev.kind === "thinking") {
+          root.thinking += ev.text
+          root.status = "thinking"
+        } else if (ev.kind === "tool") {
+          root.status = ev.text
+        } else if (ev.kind === "done") {
+          // Some turns never emit deltas (a short answer can arrive whole).
+          // The final result is the fallback, not the primary path.
+          if (!root.answer && ev.text) root.answer = ev.text
+          if (ev.sessionId) root.sessionId = ev.sessionId
+          root.status = ""
+          root.runState = "done"
+        } else if (ev.kind === "error") {
+          root.answer = ev.text
+          root.runState = "error"
+          root.status = ""
+        }
+      }
+    }
+
+    stderr: StdioCollector {
+      onStreamFinished: {
+        // Only surface stderr when nothing else explained the failure: agents
+        // write warnings there on perfectly good runs.
+        if (root.runState === "running" && text.trim()) {
+          root.answer = text.trim()
+          root.runState = "error"
+        }
+      }
+    }
+
+    onExited: function (exitCode) {
+      if (root.runState !== "running") return
+      root.runState = exitCode === 0 ? "done" : "error"
+      if (exitCode !== 0 && !root.answer)
+        root.answer = "The agent exited with code " + exitCode + "."
+      root.status = ""
+    }
+  }
+
   function submitToTerminal() {
     var text = input.text.trim()
     if (!text) return
@@ -366,7 +485,10 @@ Item {
               var shift = (event.modifiers & Qt.ShiftModifier) !== 0
 
               if (event.key === Qt.Key_Escape) {
-                root.dismiss()
+                // Esc walks back one step at a time: stop the run, then close.
+                // Closing mid-answer would throw away work already paid for.
+                if (root.runState === "running") root.cancelRun()
+                else root.dismiss()
                 event.accepted = true
               } else if (ctrl && event.key === Qt.Key_S) {
                 root.captureWindow()
@@ -388,11 +510,9 @@ Item {
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 // Ctrl+Enter inserts a newline; bare Enter and Shift+Enter
                 // both send, so the send path is never a surprise.
-                if (event.modifiers & Qt.ControlModifier) {
-                  input.insert(input.cursorPosition, "\n")
-                } else {
-                  root.submitToTerminal()
-                }
+                if (ctrl) input.insert(input.cursorPosition, "\n")
+                else if (shift) root.submitToTerminal()
+                else root.submitInline()
                 event.accepted = true
               }
             }
@@ -510,18 +630,96 @@ Item {
           opacity: 0.12
         }
 
+        // ---------------------------------------------------------- answer
+        Item {
+          width: parent.width
+          visible: root.runState !== "idle"
+          implicitHeight: visible
+            ? Math.max(Style.space(20), Math.min(answerColumn.implicitHeight, root.maxAnswerHeight))
+            : 0
+
+          Flickable {
+            id: answerFlick
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: answerColumn.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            // Follow the tail while the answer is being written, but stop
+            // fighting the user the moment the turn is over and they scroll
+            // back up to read.
+            onContentHeightChanged: {
+              if (root.runState === "running")
+                contentY = Math.max(0, contentHeight - height)
+            }
+
+            Column {
+              id: answerColumn
+              width: answerFlick.width
+              spacing: Style.spacing.xs
+
+              Text {
+                visible: root.status !== ""
+                text: root.status === "thinking" ? "thinking…" : (root.status + "…")
+                color: Color.accent
+                opacity: 0.7
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                width: parent.width
+                visible: root.answer !== ""
+                text: root.answer
+                // MarkdownText is why the agent's lists, code spans and
+                // emphasis land as formatting instead of as literal asterisks.
+                textFormat: Text.MarkdownText
+                wrapMode: Text.Wrap
+                color: root.runState === "error" ? Color.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                onLinkActivated: function (link) { Quickshell.execDetached(["xdg-open", link]) }
+              }
+            }
+          }
+        }
+
+        Rectangle {
+          width: parent.width
+          visible: root.runState !== "idle"
+          height: Style.spacing.hairline
+          color: root.foreground
+          opacity: 0.12
+        }
+
         Row {
           width: parent.width
           spacing: Style.spacing.lg
 
           Repeater {
-            model: [
-              { keys: ["enter"], label: "send" },
-              { keys: ["ctrl", "s"], label: "window" },
-              { keys: ["ctrl", "r"], label: "region" },
-              { keys: ["ctrl", "shift", "v"], label: "clipboard" },
-              { keys: ["esc"], label: "close" }
-            ]
+            // The hint row states what the keys do *now*. A static legend
+            // that still offers "send" while a run is in flight teaches the
+            // wrong thing.
+            model: {
+              if (root.runState === "running")
+                return [{ keys: ["esc"], label: "stop" }]
+
+              var hints = [{
+                keys: ["enter"],
+                label: root.runState === "idle"
+                  ? (root.inlineAvailable ? "send" : "send to terminal")
+                  : "ask again"
+              }]
+              hints.push({ keys: ["shift", "enter"], label: "terminal" })
+              if (root.runState === "idle") {
+                hints.push({ keys: ["ctrl", "s"], label: "window" })
+                hints.push({ keys: ["ctrl", "r"], label: "region" })
+                hints.push({ keys: ["ctrl", "shift", "v"], label: "clip" })
+              }
+              hints.push({ keys: ["esc"], label: "close" })
+              return hints
+            }
 
             // RowLayout rather than Row: a key cap is taller than its caption,
             // and only a layout can center the two against each other. Row
