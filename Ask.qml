@@ -48,7 +48,17 @@ Item {
   property string thinking: ""
   property string status: ""
   property string sessionId: ""
-  readonly property bool inlineAvailable: Agents.supportsInline(root.agent)
+  property bool settingsOpen: false
+
+  // The configured agent wins over the system default when set; empty means
+  // "whatever omarchy default agent says", which is the shipped behaviour.
+  readonly property string effectiveAgent: {
+    var forced = String(config.get("agent") || "")
+    return forced ? forced : root.agent
+  }
+  readonly property bool inlineAvailable: Agents.supportsInline(root.effectiveAgent)
+
+  Config { id: config }
 
   // Shares the [menu] surface tokens, so a theme that styles the launcher
   // styles this too. Nothing here is a literal color.
@@ -112,11 +122,17 @@ Item {
     // no window context than a confidently wrong one.
     if (cls === "org.omarchy.screensaver" || cls === "org.omarchy.lock") cls = ""
 
-    root.ctxClass = cls
-    root.ctxTitle = cls ? String(w.title || "") : ""
-    root.ctxAddress = cls ? String(w.address || "") : ""
-    root.ctxGeometry = cls ? String(w.geometry || "") : ""
-    root.ctxCwd = String(p.cwd || "")
+    // Settings are applied here, at the point of use, rather than in the
+    // wrapper: collecting is cheap and lossless, and it keeps --print-context
+    // honest about what the machine can see regardless of preferences.
+    var wantWindow = config.get("captureWindow")
+    var wantCwd = config.get("captureCwd")
+
+    root.ctxClass = wantWindow ? cls : ""
+    root.ctxTitle = (wantWindow && cls) ? String(w.title || "") : ""
+    root.ctxAddress = (wantWindow && cls) ? String(w.address || "") : ""
+    root.ctxGeometry = (wantWindow && cls) ? String(w.geometry || "") : ""
+    root.ctxCwd = wantCwd ? String(p.cwd || "") : ""
   }
 
   // ----------------------------------------------------------- attachments
@@ -260,7 +276,7 @@ Item {
     var text = input.text.trim()
     if (!text || root.runState === "running") return
 
-    var adapter = Agents.forAgent(root.agent)
+    var adapter = Agents.forAgent(root.effectiveAgent)
     // No adapter means no way to read this agent's output. Falling back to the
     // terminal beats an empty card that never fills in.
     if (!adapter) {
@@ -278,10 +294,20 @@ Item {
       prompt: root.composePrompt(),
       cwd: root.ctxCwd,
       sessionId: root.sessionId,
-      allowedTools: Agents.READ_ONLY_TOOLS
+      allowedTools: String(config.get("inlineTools") || Agents.READ_ONLY_TOOLS)
     })
     if (root.ctxCwd) runProc.workingDirectory = root.ctxCwd
     runProc.running = true
+  }
+
+  // Focus has to be handed over explicitly: the composer and the settings
+  // list are two different key handlers, and a hidden TextArea keeps nothing.
+  function toggleSettings() {
+    root.settingsOpen = !root.settingsOpen
+    Qt.callLater(function () {
+      if (root.settingsOpen) settingsKeys.forceActiveFocus()
+      else input.forceActiveFocus()
+    })
   }
 
   function cancelRun() {
@@ -457,8 +483,44 @@ Item {
           }
         }
 
+        // -------------------------------------------------------- settings
+        Item {
+          id: settingsKeys
+          width: parent.width
+          visible: root.settingsOpen
+          implicitHeight: visible ? settingsView.implicitHeight : 0
+          focus: root.settingsOpen
+
+          Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Escape || (event.modifiers & Qt.ControlModifier && event.key === Qt.Key_Comma)) {
+              root.toggleSettings()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
+              settingsView.move(-1)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J) {
+              settingsView.move(1)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Space || event.key === Qt.Key_Return
+                       || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
+              settingsView.activate()
+              event.accepted = true
+            }
+          }
+
+          SettingsView {
+            id: settingsView
+            width: parent.width
+            config: config
+            agent: root.agent
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+        }
+
         // ----------------------------------------------------------- input
         BorderSurface {
+          visible: !root.settingsOpen
           width: parent.width
           height: Math.max(Style.space(64), input.implicitHeight + Style.spacing.inputPaddingY * 2)
           radius: root.cornerRadius
@@ -490,6 +552,9 @@ Item {
                 if (root.runState === "running") root.cancelRun()
                 else root.dismiss()
                 event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_Comma) {
+                root.toggleSettings()
+                event.accepted = true
               } else if (ctrl && event.key === Qt.Key_S) {
                 root.captureWindow()
                 event.accepted = true
@@ -512,6 +577,7 @@ Item {
                 // both send, so the send path is never a surprise.
                 if (ctrl) input.insert(input.cursorPosition, "\n")
                 else if (shift) root.submitToTerminal()
+                else if (config.get("sendMode") === "terminal") root.submitToTerminal()
                 else root.submitInline()
                 event.accepted = true
               }
@@ -523,7 +589,7 @@ Item {
         Flow {
           width: parent.width
           spacing: Style.spacing.sm
-          visible: chipRepeater.count > 0
+          visible: chipRepeater.count > 0 && !root.settingsOpen
 
           Repeater {
             id: chipRepeater
@@ -633,7 +699,7 @@ Item {
         // ---------------------------------------------------------- answer
         Item {
           width: parent.width
-          visible: root.runState !== "idle"
+          visible: root.runState !== "idle" && !root.settingsOpen
           implicitHeight: visible
             ? Math.max(Style.space(20), Math.min(answerColumn.implicitHeight, root.maxAnswerHeight))
             : 0
@@ -702,6 +768,9 @@ Item {
             // that still offers "send" while a run is in flight teaches the
             // wrong thing.
             model: {
+              if (root.settingsOpen)
+                return [{ keys: ["space"], label: "change" },
+                        { keys: ["esc"], label: "back" }]
               if (root.runState === "running")
                 return [{ keys: ["esc"], label: "stop" }]
 
@@ -717,6 +786,7 @@ Item {
                 hints.push({ keys: ["ctrl", "r"], label: "region" })
                 hints.push({ keys: ["ctrl", "shift", "v"], label: "clip" })
               }
+              hints.push({ keys: ["ctrl", ","], label: "settings" })
               hints.push({ keys: ["esc"], label: "close" })
               return hints
             }
