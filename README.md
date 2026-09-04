@@ -72,6 +72,27 @@ compositor reports while they are up, but the window underneath is what you
 meant, and it is no longer reachable. No window context beats confidently wrong
 context.
 
+## Keys
+
+| Key | Does |
+|---|---|
+| `enter` | send — streams the answer in the card |
+| `shift+enter` | send to a terminal agent instead |
+| `ctrl+enter` | newline |
+| `ctrl+s` | attach a shot of the window you came from |
+| `ctrl+r` | attach a screen region (Omarchy's frozen-screen picker) |
+| `ctrl+shift+v` | attach the clipboard (image or text) |
+| `ctrl+shift+backspace` | drop the last attachment |
+| `ctrl+,` | settings |
+| `esc` | stop a running answer, then close |
+
+Attachments show up as chips and travel to the agent **as file paths**: every
+agent can already read a file it is pointed at, so nothing here needs a
+per-agent upload protocol.
+
+Nothing is attached without a keystroke. A clipboard that shipped with every
+question would eventually ship a password.
+
 ## Sending
 
 `enter` composes the prompt (your text plus a short context block, shaped like
@@ -82,6 +103,38 @@ which routes it to your default agent in a terminal tagged
 When a working directory was captured, the agent is started **in** it:
 `omarchy-agent` redirects to `~/Work` when it starts from `$HOME`, so the
 directory has to be applied before it runs.
+
+`enter` streams the answer into the card. `shift+enter` sends the same
+question to a terminal instead, which is also where anything that needs to
+*change* something belongs: the inline path runs read-only
+(`--permission-prompts none` plus a tools allowlist), because a global hotkey
+that can auto-approve writes from anywhere is not a trade worth making.
+
+Agents whose streaming format has an adapter answer inline; the rest fall back
+to the terminal rather than showing a card that never fills in.
+
+| Agent | Inline | Note |
+|---|---|---|
+| `claude` | yes | verified against Claude Code's `stream-json` |
+| `grok` | yes | same Anthropic envelope; **not yet verified** — no signed-in CLI here |
+| everything else | no | terminal, via `omarchy-agent` |
+
+## Settings
+
+`ctrl+,` opens the settings screen. Space changes the selected value; booleans
+flip, enums advance.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `captureWindow` | `true` | attach class and title of the window you came from |
+| `captureCwd` | `true` | resolve the terminal's directory and run the agent in it |
+| `sendMode` | `inline` | what plain `enter` does |
+| `agent` | `""` | force an agent for the inline path; empty follows `omarchy default agent` |
+| `inlineTools` | `Read Grep Glob WebFetch WebSearch` | tools the inline run may use |
+
+They live in `~/.config/omarchy/ask.json`, deliberately outside this checkout:
+`omarchy plugin update` fast-forwards the plugin directory and would walk over
+a config file kept inside it. Only changed keys are written.
 
 ## Theming
 
@@ -123,6 +176,15 @@ omarchy-shell shell hide xn4m3d.ask
 # QML warnings land in the journal
 journalctl --user _PID=$(pgrep -f 'quickshell -n -p /usr/share/omarchy/shell') -f
 ```
+
+## Not there yet
+
+- **A file picker.** `ctrl+o` is unclaimed. For now, typing a path into the
+  question works — the agent reads it like any other path.
+- **Grok inline is unverified.** The format matches Claude's on paper and the
+  adapter is written, but nothing here is signed in to xAI to prove it.
+- **Codex has no adapter.** `codex exec --json` speaks its own event format;
+  until someone writes that adapter, codex answers in a terminal.
 
 ## License
 
