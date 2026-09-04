@@ -199,6 +199,39 @@ Built and exercised on a single machine. Being straight about which is which:
 - Multi-monitor, and scale factors other than the one it was built on.
 - Codex: `codex exec --json` speaks its own event format and has no adapter yet.
 
+## Contributing
+
+**Pull requests are very welcome** — `ask` is still in development, and the
+point of it is to be useful to people who actually run it. Anything you send is
+read, considered on its merits, and merged when it fits; if it does not fit as
+sent, expect a real answer about why rather than silence.
+
+The gaps listed just above are the obvious way in, and each is self-contained:
+
+- **A `codex` adapter.** `codex exec --json` has its own event format. Two pure
+  functions in [`agents.js`](agents.js) and it streams inline like Claude.
+- **Confirm — or fix — the `grok` adapter.** It is written against the
+  documented envelope but has never run, so anyone with a signed-in xAI CLI can
+  settle it in one turn.
+- **Any other agent** Omarchy supports. Same two functions.
+- **Multi-monitor and other scale factors.** Built on a single 1080p screen; if
+  the card sits wrong on your setup, a bug report with `hyprctl monitors` is
+  already useful.
+- **Themes.** Every color comes from the shell's tokens, so if some theme makes
+  the card unreadable that is a real bug worth reporting.
+
+Requests are welcome too, not just patches. If it does something awkward on
+your machine, say so — awkward-on-a-real-desktop beats correct-in-principle.
+
+Two things to know before hacking:
+
+- A third-party plugin runs **unsandboxed inside `omarchy-shell`**, so a change
+  that throws can take the bar down with it. Keep
+  `omarchy plugin disable xn4m3d.ask && omarchy restart shell` within reach.
+- Please say in the PR what you actually ran. This project keeps a
+  [Tested, and not](#tested-and-not) section precisely so nobody has to guess
+  what has been exercised and what has only been written.
+
 ## How it works
 
 The overlay lives inside the already-running `omarchy-shell` Quickshell process,
