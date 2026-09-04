@@ -85,6 +85,7 @@ context.
 | `ctrl+o` | attach a file — opens the picker |
 | `↑` `↓` | recall previous prompts (from the first/last line of the box) |
 | `ctrl+h` | history — past turns, reopenable and resumable |
+| `ctrl+shift+c` | copy the answer (there is also a `copy` button beside the question) |
 | `ctrl+c` | stop a running answer |
 | `ctrl+shift+backspace` | drop the last attachment |
 | `ctrl+,` | settings |
@@ -243,8 +244,12 @@ All of it is one setting: `animations`, on by default. Turning it off keeps the
 layout identical and drops the movement — including, always, during a screen
 capture, where a fading card would end up inside the screenshot.
 
-The answer is selectable, so it can be copied out. Clicking into it takes
-focus; click back in the box to keep typing.
+The answer is selectable, so a passage can be dragged out by hand. Clicking into
+it takes focus; click back in the box to keep typing. For the whole answer there
+is `ctrl+shift+c` — copy, in every terminal on this desktop — and a `copy`
+button parked on the right of the question line, where it can never sit on top
+of the text it copies. Both go through `wl-copy` the same way Omarchy's own
+panels do.
 
 ## Hacking on it
 

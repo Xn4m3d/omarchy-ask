@@ -337,8 +337,18 @@ Item {
     return path
   }
 
+  // The shell already ships this; a second copy of a quoting routine is a
+  // second place for it to be subtly wrong.
   function shellQuote(value) {
-    return "'" + String(value).replace(/'/g, "'\\''") + "'"
+    return Util.shellQuote(value)
+  }
+
+  function copyAnswer() {
+    if (!root.answer) return
+    // Same shape Omarchy uses for its own copy actions (network and tailscale
+    // panels), so there is one clipboard idiom on this desktop, not two.
+    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(root.answer) + " | wl-copy"])
+    root.flash("answer copied")
   }
 
   // The context block mirrors the shape omarchy-agent-crash uses: plain facts
@@ -888,6 +898,11 @@ Item {
                 // problem this is meant to remove. Ctrl+C actually stops one.
                 root.dismiss()
                 event.accepted = true
+              } else if (ctrl && shift && event.key === Qt.Key_C) {
+                // Ctrl+Shift+C is copy in every terminal on this desktop, and
+                // it leaves plain Ctrl+C free to stop a run.
+                root.copyAnswer()
+                event.accepted = true
               } else if (ctrl && event.key === Qt.Key_C && root.runState === "running"
                          && !input.selectedText) {
                 // Only with no selection: Ctrl+C has to stay "copy" whenever
@@ -1077,16 +1092,59 @@ Item {
               width: answerFlick.width
               spacing: Style.spacing.xs
 
-              Text {
+              // The asked question, with the copy affordance parked on its
+              // right. Putting it here rather than floating over the answer
+              // keeps it from ever sitting on top of the text it copies.
+              Item {
                 width: parent.width
                 visible: root.askedPrompt !== ""
-                text: root.askedPrompt
-                color: root.foreground
-                opacity: 0.5
-                wrapMode: Text.Wrap
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                bottomPadding: Style.spacing.xxs
+                implicitHeight: Math.max(askedText.implicitHeight, copyButton.implicitHeight)
+                          + Style.spacing.xxs
+
+                Text {
+                  id: askedText
+                  anchors.left: parent.left
+                  anchors.right: copyButton.visible ? copyButton.left : parent.right
+                  anchors.rightMargin: copyButton.visible ? Style.spacing.sm : 0
+                  anchors.top: parent.top
+                  text: root.askedPrompt
+                  color: root.foreground
+                  opacity: 0.5
+                  wrapMode: Text.Wrap
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Rectangle {
+                  id: copyButton
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  visible: root.answer !== "" && root.runState !== "running"
+                  implicitWidth: copyLabel.implicitWidth + Style.spacing.sm * 2
+                  implicitHeight: copyLabel.implicitHeight + Style.spacing.xxs * 2
+                  radius: Math.max(Style.space(2), Style.cornerRadius)
+                  color: copyArea.containsMouse ? Style.hoverFill : Style.normalFill
+                  border.width: Style.normalBorderWidth
+                  border.color: copyArea.containsMouse ? Style.hoverBorderColor : Style.normalBorderColor
+
+                  Text {
+                    id: copyLabel
+                    anchors.centerIn: parent
+                    text: "copy"
+                    color: root.foreground
+                    opacity: copyArea.containsMouse ? 0.95 : 0.6
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  MouseArea {
+                    id: copyArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.copyAnswer()
+                  }
+                }
               }
 
               Text {
@@ -1211,6 +1269,7 @@ Item {
                   : "follow up"
               }]
               hints.push({ keys: ["shift", "enter"], label: "terminal" })
+              if (root.answer) hints.push({ keys: ["ctrl", "shift", "c"], label: "copy" })
               if (root.runState === "idle") {
                 hints.push({ keys: ["ctrl", "s"], label: "window" })
                 hints.push({ keys: ["ctrl", "r"], label: "region" })
