@@ -45,6 +45,11 @@ Item {
   // Inline run state: "idle" | "running" | "done" | "error".
   property string runState: "idle"
   property string answer: ""
+
+  // The question this answer belongs to. It moves out of the input and above
+  // the answer on send, so the box is empty and ready for a follow-up while
+  // you can still see what was asked.
+  property string askedPrompt: ""
   property string thinking: ""
   property string status: ""
   property string sessionId: ""
@@ -132,6 +137,7 @@ Item {
     root.status = ""
     root.runState = "idle"
     root.historyIndex = -1
+    root.askedPrompt = ""
     input.text = ""
   }
 
@@ -143,7 +149,11 @@ Item {
     root.settingsOpen = false
     root.pickerOpen = false
     root.historyOpen = false
-    input.text = String(t.prompt || "")
+    // The recalled question goes above the answer, not back into the box:
+    // reopening a turn is for continuing it, and a box pre-filled with the
+    // question you already asked makes Enter re-ask it.
+    root.askedPrompt = String(t.prompt || "")
+    input.text = ""
     root.answer = String(t.answer || "")
     root.sessionId = String(t.sessionId || "")
     root.ctxCwd = String(t.cwd || "")
@@ -379,6 +389,11 @@ Item {
     })
     if (root.ctxCwd) runProc.workingDirectory = root.ctxCwd
     runProc.running = true
+
+    // Only after argv is built: composePrompt() reads the box.
+    root.askedPrompt = text
+    input.text = ""
+    root.historyIndex = -1
   }
 
   // Focus has to be handed over explicitly: the composer and the settings
@@ -1013,6 +1028,18 @@ Item {
               spacing: Style.spacing.xs
 
               Text {
+                width: parent.width
+                visible: root.askedPrompt !== ""
+                text: root.askedPrompt
+                color: root.foreground
+                opacity: 0.5
+                wrapMode: Text.Wrap
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                bottomPadding: Style.spacing.xxs
+              }
+
+              Text {
                 visible: root.status !== ""
                 text: root.status === "thinking" ? "thinking…" : (root.status + "…")
                 color: Color.accent
@@ -1075,7 +1102,7 @@ Item {
                 keys: ["enter"],
                 label: root.runState === "idle"
                   ? (root.inlineAvailable ? "send" : "send to terminal")
-                  : "ask again"
+                  : "follow up"
               }]
               hints.push({ keys: ["shift", "enter"], label: "terminal" })
               if (root.runState === "idle") {

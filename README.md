@@ -109,6 +109,11 @@ question to a terminal instead, which is also where anything that needs to
 (`--permission-prompts none` plus a tools allowlist), because a global hotkey
 that can auto-approve writes from anywhere is not a trade worth making.
 
+Sending empties the box and moves the question above the answer, so you can see
+what was asked while the box is already free for a follow-up. `enter` then
+continues that same conversation — the agent's session id is reused — rather
+than re-asking. `↑` brings the question back if you want to edit and re-send it.
+
 Agents whose streaming format has an adapter answer inline; the rest fall back
 to the terminal rather than showing a card that never fills in.
 
