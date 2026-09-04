@@ -17,6 +17,11 @@ set -uo pipefail
 DIR="${XDG_RUNTIME_DIR:-/tmp}/omarchy-ask"
 mkdir -p "$DIR" || exit 1
 
+# XDG_RUNTIME_DIR is cleared at logout, which covers the common case, but a
+# machine that stays up for weeks would otherwise keep every screenshot ever
+# attached. Best-effort: a failure here must not stop a capture.
+find "$DIR" -type f -mmin +1440 -delete 2>/dev/null || true
+
 stamp() { date +'%Y%m%d-%H%M%S-%N' | cut -c1-19; }
 
 # The overlay sets itself invisible before calling us, but a Wayland surface is
