@@ -82,6 +82,7 @@ context.
 | `ctrl+s` | attach a shot of the window you came from |
 | `ctrl+r` | attach a screen region (Omarchy's frozen-screen picker) |
 | `ctrl+shift+v` | attach the clipboard (image or text) |
+| `ctrl+o` | attach a file — opens the picker |
 | `ctrl+shift+backspace` | drop the last attachment |
 | `ctrl+,` | settings |
 | `esc` | stop a running answer, then close |
@@ -118,6 +119,32 @@ The terminal path goes through `omarchy-agent --prompt`, which opens a window
 tagged `org.omarchy.agent`. When a working directory was captured, the agent
 starts **in** it: `omarchy-agent` redirects to `~/Work` when it starts from
 `$HOME`, so the directory has to be applied before it runs.
+
+## The file picker
+
+`ctrl+o` opens a keyboard-driven picker, starting in the directory the question
+came from — attaching a file from the project you were just looking at is the
+common case by a wide margin.
+
+| Key | Does |
+|---|---|
+| type | filter the listing |
+| `↑` `↓` (or `ctrl+p` / `ctrl+n`) | move |
+| `enter` | enter a directory, or attach a file |
+| `backspace` | trim the filter, or go up when it is empty |
+| `←` | go up |
+| `ctrl+h` | show hidden entries |
+| `esc` | back to the composer |
+
+It is built in rather than shelling out to a portal dialog: the card already
+owns keyboard focus, and handing that to a GTK file chooser would mean a second
+window, a second focus dance, and a theme that does not match.
+
+Listing goes through `bin/omarchy-ask-ls`, which uses `find -printf` rather
+than `ls -1`: a filename containing a newline makes `ls` output unparseable,
+and unparseable here means attaching the wrong file. Symlinks are classified by
+what they point at (`-xtype`), so a link to a directory is enterable and a link
+to a file is attachable.
 
 ## Settings
 
@@ -179,8 +206,6 @@ journalctl --user _PID=$(pgrep -f 'quickshell -n -p /usr/share/omarchy/shell') -
 
 ## Not there yet
 
-- **A file picker.** `ctrl+o` is unclaimed. For now, typing a path into the
-  question works — the agent reads it like any other path.
 - **Grok inline is unverified.** The format matches Claude's on paper and the
   adapter is written, but nothing here is signed in to xAI to prove it.
 - **Codex has no adapter.** `codex exec --json` speaks its own event format;

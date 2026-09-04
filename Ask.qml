@@ -49,6 +49,7 @@ Item {
   property string status: ""
   property string sessionId: ""
   property bool settingsOpen: false
+  property bool pickerOpen: false
 
   // The configured agent wins over the system default when set; empty means
   // "whatever omarchy default agent says", which is the shipped behaviour.
@@ -310,6 +311,20 @@ Item {
     })
   }
 
+  function togglePicker() {
+    root.pickerOpen = !root.pickerOpen
+    if (root.pickerOpen) {
+      // Start where the question came from: attaching a file from the project
+      // you were just looking at is the common case by a wide margin.
+      filePicker.startDir = root.ctxCwd || Quickshell.env("HOME")
+      filePicker.start()
+    }
+    Qt.callLater(function () {
+      if (root.pickerOpen) pickerKeys.forceActiveFocus()
+      else input.forceActiveFocus()
+    })
+  }
+
   function cancelRun() {
     if (root.runState !== "running") return
     runProc.running = false
@@ -483,6 +498,60 @@ Item {
           }
         }
 
+        // ---------------------------------------------------------- picker
+        Item {
+          id: pickerKeys
+          width: parent.width
+          visible: root.pickerOpen
+          implicitHeight: visible ? filePicker.implicitHeight : 0
+          focus: root.pickerOpen
+
+          Keys.onPressed: function (event) {
+            var ctrlMod = (event.modifiers & Qt.ControlModifier) !== 0
+
+            if (event.key === Qt.Key_Escape) {
+              root.togglePicker()
+              event.accepted = true
+            } else if (ctrlMod && event.key === Qt.Key_H) {
+              filePicker.toggleHidden()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up || (ctrlMod && event.key === Qt.Key_P)) {
+              filePicker.move(-1)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down || (ctrlMod && event.key === Qt.Key_N)) {
+              filePicker.move(1)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              filePicker.activate()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Backspace) {
+              filePicker.back()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Left) {
+              filePicker.up()
+              event.accepted = true
+            } else if (event.text && event.text.length === 1
+                       && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+              // Typing filters. There is no separate search box to focus,
+              // which is the whole point of a list you drive with the keyboard.
+              filePicker.setFilter(filePicker.filter + event.text)
+              event.accepted = true
+            }
+          }
+
+          FilePicker {
+            id: filePicker
+            width: parent.width
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onAttached: function (path) {
+              root.addAttachment("file", path)
+              root.togglePicker()
+            }
+            onCancelled: root.togglePicker()
+          }
+        }
+
         // -------------------------------------------------------- settings
         Item {
           id: settingsKeys
@@ -520,7 +589,7 @@ Item {
 
         // ----------------------------------------------------------- input
         BorderSurface {
-          visible: !root.settingsOpen
+          visible: !root.settingsOpen && !root.pickerOpen
           width: parent.width
           height: Math.max(Style.space(64), input.implicitHeight + Style.spacing.inputPaddingY * 2)
           radius: root.cornerRadius
@@ -551,6 +620,9 @@ Item {
                 // Closing mid-answer would throw away work already paid for.
                 if (root.runState === "running") root.cancelRun()
                 else root.dismiss()
+                event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_O) {
+                root.togglePicker()
                 event.accepted = true
               } else if (ctrl && event.key === Qt.Key_Comma) {
                 root.toggleSettings()
@@ -589,7 +661,7 @@ Item {
         Flow {
           width: parent.width
           spacing: Style.spacing.sm
-          visible: chipRepeater.count > 0 && !root.settingsOpen
+          visible: chipRepeater.count > 0 && !root.settingsOpen && !root.pickerOpen
 
           Repeater {
             id: chipRepeater
@@ -699,7 +771,7 @@ Item {
         // ---------------------------------------------------------- answer
         Item {
           width: parent.width
-          visible: root.runState !== "idle" && !root.settingsOpen
+          visible: root.runState !== "idle" && !root.settingsOpen && !root.pickerOpen
           implicitHeight: visible
             ? Math.max(Style.space(20), Math.min(answerColumn.implicitHeight, root.maxAnswerHeight))
             : 0
@@ -753,21 +825,26 @@ Item {
 
         Rectangle {
           width: parent.width
-          visible: root.runState !== "idle"
+          visible: root.runState !== "idle" && !root.settingsOpen && !root.pickerOpen
           height: Style.spacing.hairline
           color: root.foreground
           opacity: 0.12
         }
 
-        Row {
+        Flow {
           width: parent.width
-          spacing: Style.spacing.lg
+          spacing: Style.spacing.sm
 
           Repeater {
             // The hint row states what the keys do *now*. A static legend
             // that still offers "send" while a run is in flight teaches the
             // wrong thing.
             model: {
+              if (root.pickerOpen)
+                return [{ keys: ["enter"], label: "open" },
+                        { keys: ["bksp"], label: "up" },
+                        { keys: ["ctrl", "h"], label: "hidden" },
+                        { keys: ["esc"], label: "back" }]
               if (root.settingsOpen)
                 return [{ keys: ["space"], label: "change" },
                         { keys: ["esc"], label: "back" }]
@@ -785,37 +862,56 @@ Item {
                 hints.push({ keys: ["ctrl", "s"], label: "window" })
                 hints.push({ keys: ["ctrl", "r"], label: "region" })
                 hints.push({ keys: ["ctrl", "shift", "v"], label: "clip" })
+                hints.push({ keys: ["ctrl", "o"], label: "file" })
               }
               hints.push({ keys: ["ctrl", ","], label: "settings" })
               hints.push({ keys: ["esc"], label: "close" })
               return hints
             }
 
-            // RowLayout rather than Row: a key cap is taller than its caption,
-            // and only a layout can center the two against each other. Row
-            // would top-align them and the captions would ride high.
-            delegate: RowLayout {
+            // Each key and its action share one outline, so the eye groups
+            // "ctrl+shift+v" with "clip" instead of guessing where one hint
+            // ends and the next begins. The group's border is deliberately
+            // fainter than the key caps' — nesting two equal outlines reads
+            // as noise.
+            delegate: Rectangle {
               id: hint
               required property var modelData
-              spacing: Style.spacing.xs
 
-              Repeater {
-                model: hint.modelData.keys
-                delegate: KeyCap {
-                  required property string modelData
-                  label: modelData
-                  foreground: root.foreground
+              implicitWidth: hintRow.implicitWidth + Style.spacing.sm * 2
+              implicitHeight: hintRow.implicitHeight + Style.spacing.xs * 2
+              radius: Math.max(Style.space(3), Style.cornerRadius)
+              color: "transparent"
+              border.width: Math.max(1, Style.normalBorderWidth)
+              border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
+
+              // RowLayout rather than Row: a key cap is taller than its
+              // caption, and only a layout can center the two against each
+              // other. Row would top-align them and the captions would ride
+              // high.
+              RowLayout {
+                id: hintRow
+                anchors.centerIn: parent
+                spacing: Style.spacing.xs
+
+                Repeater {
+                  model: hint.modelData.keys
+                  delegate: KeyCap {
+                    required property string modelData
+                    label: modelData
+                    foreground: root.foreground
+                    Layout.alignment: Qt.AlignVCenter
+                  }
+                }
+
+                Text {
+                  text: hint.modelData.label
+                  color: root.foreground
+                  opacity: 0.55
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
                   Layout.alignment: Qt.AlignVCenter
                 }
-              }
-
-              Text {
-                text: hint.modelData.label
-                color: root.foreground
-                opacity: 0.45
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                Layout.alignment: Qt.AlignVCenter
               }
             }
           }

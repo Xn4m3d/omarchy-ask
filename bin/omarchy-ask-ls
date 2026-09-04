@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# omarchy:summary=List a directory for the ask file picker
+# omarchy:args=<dir> [--hidden]
+# omarchy:hidden=true
+
+# Prints one entry per line as "<type>\t<name>", directories first, each group
+# sorted case-insensitively:
+#
+#   d	src
+#   f	README.md
+#
+# find -printf rather than ls: ls -1 is unparseable the moment a filename
+# contains a newline, and "unparseable" here means the picker attaches the
+# wrong file. Entries whose name contains a newline are dropped instead —
+# they cannot be represented in a line-based protocol, and silently mangling
+# them is worse than not listing them.
+
+set -uo pipefail
+
+dir="${1:-}"
+hidden=false
+[[ ${2:-} == "--hidden" ]] && hidden=true
+
+[[ -n $dir ]] || { echo "Usage: omarchy-ask-ls <dir> [--hidden]" >&2; exit 1; }
+[[ -d $dir ]] || { echo "Not a directory: $dir" >&2; exit 1; }
+[[ -r $dir ]] || { echo "Not readable: $dir" >&2; exit 1; }
+
+# -xtype follows the link before deciding: a symlink to a directory should be
+# enterable and a symlink to a file attachable, which is what the user means by
+# clicking it. Plain -type would call every symlink its own kind and get both
+# wrong.
+list() {
+  local label=$1 findtype=$2
+  find "$dir" -mindepth 1 -maxdepth 1 -xtype "$findtype" -printf '%f\n' 2>/dev/null |
+    { if [[ $hidden == "true" ]]; then cat; else grep -v '^\.'; fi; } |
+    grep -v '[[:cntrl:]]' |
+    LC_ALL=C.UTF-8 sort -f |
+    sed "s/^/$label\t/"
+}
+
+list d d
+list f f
+
+exit 0
