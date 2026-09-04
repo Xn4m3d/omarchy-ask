@@ -95,14 +95,9 @@ question would eventually ship a password.
 
 ## Sending
 
-`enter` composes the prompt (your text plus a short context block, shaped like
-the one `omarchy-agent-crash` builds) and hands it to `omarchy-agent --prompt`,
-which routes it to your default agent in a terminal tagged
-`org.omarchy.agent`.
-
-When a working directory was captured, the agent is started **in** it:
-`omarchy-agent` redirects to `~/Work` when it starts from `$HOME`, so the
-directory has to be applied before it runs.
+Either way, the prompt is your text plus a short context block, shaped like the
+one `omarchy-agent-crash` builds — plain facts under a heading, which every
+agent reads without special handling.
 
 `enter` streams the answer into the card. `shift+enter` sends the same
 question to a terminal instead, which is also where anything that needs to
@@ -118,6 +113,11 @@ to the terminal rather than showing a card that never fills in.
 | `claude` | yes | verified against Claude Code's `stream-json` |
 | `grok` | yes | same Anthropic envelope; **not yet verified** — no signed-in CLI here |
 | everything else | no | terminal, via `omarchy-agent` |
+
+The terminal path goes through `omarchy-agent --prompt`, which opens a window
+tagged `org.omarchy.agent`. When a working directory was captured, the agent
+starts **in** it: `omarchy-agent` redirects to `~/Work` when it starts from
+`$HOME`, so the directory has to be applied before it runs.
 
 ## Settings
 
