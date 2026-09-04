@@ -14,6 +14,7 @@ set -uo pipefail
 
 PLUGIN_ID="xn4m3d.ask"
 action="toggle"
+restore=""
 
 while (($#)); do
   case "$1" in
@@ -21,8 +22,14 @@ while (($#)); do
     --toggle) action="toggle" ;;
     --open) action="summon" ;;
     --close) action="hide" ;;
+    # What the "Ask answered" notification runs when clicked: reopen on the
+    # last recorded turn instead of an empty composer.
+    --last)
+      action="summon"
+      restore="last"
+      ;;
     -h | --help)
-      echo "Usage: omarchy-ask [--print-context] [--toggle|--open|--close]"
+      echo "Usage: omarchy-ask [--print-context] [--toggle|--open|--close|--last]"
       exit 0
       ;;
     *)
@@ -57,6 +64,7 @@ cwd=$(window_cwd "$pid")
 payload=$(jq -nc \
   --argjson w "$active" \
   --arg cwd "$cwd" \
+  --arg restore "$restore" \
   '{
      window: {
        class: ($w.class // ""),
@@ -71,7 +79,8 @@ payload=$(jq -nc \
                   then "\($w.at[0]),\($w.at[1]) \($w.size[0])x\($w.size[1])"
                   else "" end)
      },
-     cwd: $cwd
+     cwd: $cwd,
+     restore: $restore
    }')
 
 if [[ $action == "print" ]]; then

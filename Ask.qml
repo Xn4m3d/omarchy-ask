@@ -50,6 +50,12 @@ Item {
   property string sessionId: ""
   property bool settingsOpen: false
   property bool pickerOpen: false
+  property bool historyOpen: false
+
+  // -1 means "typing", not "browsing". Up-arrow walks it forward through
+  // history.prompts and Down walks it back to -1.
+  property int historyIndex: -1
+  property string draftBeforeHistory: ""
 
   // The configured agent wins over the system default when set; empty means
   // "whatever omarchy default agent says", which is the shipped behaviour.
@@ -60,6 +66,7 @@ Item {
   readonly property bool inlineAvailable: Agents.supportsInline(root.effectiveAgent)
 
   Config { id: config }
+  History { id: history }
 
   // Shares the [menu] surface tokens, so a theme that styles the launcher
   // styles this too. Nothing here is a literal color.
@@ -83,18 +90,66 @@ Item {
   // ------------------------------------------------------------- lifecycle
 
   function open(payloadJson) {
+    var p = {}
+    try {
+      if (payloadJson) p = JSON.parse(payloadJson) || {}
+    } catch (e) {}
+
+    // Closing the card does not cancel the agent, so a summon that lands while
+    // a turn is still being written puts you back in front of it instead of
+    // discarding work you already paid for.
+    if (root.runState === "running") {
+      root.opened = true
+      Qt.callLater(function () { input.forceActiveFocus() })
+      return
+    }
+
+    // Reopening on a finished turn, from the notification or `omarchy-ask
+    // --last`: show the answer rather than an empty box.
+    if (p.restore === "last" && history.turns.length > 0) {
+      root.showTurn(0)
+      root.opened = true
+      agentProbe.running = true
+      Qt.callLater(function () { input.forceActiveFocus() })
+      return
+    }
+
     applyPayload(payloadJson)
+    root.resetComposer()
+    root.opened = true
+    agentProbe.running = true
+    Qt.callLater(function () { input.forceActiveFocus() })
+  }
+
+  // A fresh question is a fresh conversation: dropping the session id is what
+  // stops the previous topic from leaking into an unrelated one.
+  function resetComposer() {
     root.attachments = []
     root.notice = ""
-    // A fresh summon is a fresh conversation: dropping the session id is what
-    // stops yesterday's context from leaking into an unrelated question.
     root.sessionId = ""
     root.answer = ""
     root.thinking = ""
     root.status = ""
     root.runState = "idle"
-    root.opened = true
-    agentProbe.running = true
+    root.historyIndex = -1
+    input.text = ""
+  }
+
+  // Load a recorded turn back into the card, session id included, so Enter
+  // continues that conversation instead of starting a new one.
+  function showTurn(index) {
+    if (index < 0 || index >= history.turns.length) return
+    var t = history.turns[index]
+    root.settingsOpen = false
+    root.pickerOpen = false
+    root.historyOpen = false
+    input.text = String(t.prompt || "")
+    root.answer = String(t.answer || "")
+    root.sessionId = String(t.sessionId || "")
+    root.ctxCwd = String(t.cwd || "")
+    root.attachments = []
+    root.status = ""
+    root.runState = t.answer ? "done" : "idle"
     Qt.callLater(function () { input.forceActiveFocus() })
   }
 
@@ -290,6 +345,16 @@ Item {
     root.status = "thinking"
     root.runState = "running"
 
+    // Recorded before the run, not after: a turn that never finishes is
+    // exactly the one worth being able to find again.
+    history.record({
+      prompt: text,
+      agent: root.effectiveAgent,
+      cwd: root.ctxCwd,
+      sessionId: root.sessionId,
+      attachments: root.attachments
+    })
+
     runProc.adapter = adapter
     runProc.command = adapter.argv({
       prompt: root.composePrompt(),
@@ -311,6 +376,68 @@ Item {
     })
   }
 
+  // Up-arrow recalls previous prompts, the way a shell does — but only from
+  // the first line of the box. Below that, Up has to stay "move the cursor up"
+  // or a multi-line question becomes uneditable.
+  function cursorOnFirstLine() {
+    return input.text.substring(0, input.cursorPosition).indexOf("\n") === -1
+  }
+
+  function cursorOnLastLine() {
+    return input.text.substring(input.cursorPosition).indexOf("\n") === -1
+  }
+
+  function recallPrompt(delta) {
+    var list = history.prompts
+    if (list.length === 0) return false
+
+    var next = root.historyIndex + delta
+    if (next < -1) next = -1
+    if (next >= list.length) next = list.length - 1
+    if (next === root.historyIndex) return true
+
+    // Stash whatever was being typed on the way into history, and hand it
+    // back on the way out. Losing a half-written question to a stray arrow
+    // key is the thing that makes people stop trusting history.
+    if (root.historyIndex === -1 && next >= 0)
+      root.draftBeforeHistory = input.text
+
+    root.historyIndex = next
+    input.text = next === -1 ? root.draftBeforeHistory : list[next]
+    input.cursorPosition = input.text.length
+    return true
+  }
+
+  function toggleHistory() {
+    root.historyOpen = !root.historyOpen
+    if (root.historyOpen) historyView.index = 0
+    Qt.callLater(function () {
+      if (root.historyOpen) historyKeys.forceActiveFocus()
+      else input.forceActiveFocus()
+    })
+  }
+
+  // Hand a recorded session to a real terminal. The agent's own --resume is
+  // what makes this a continuation rather than a re-ask, so an entry without a
+  // session id gets the prompt back instead of a broken resume.
+  function resumeTurnInTerminal(index) {
+    if (index < 0 || index >= history.turns.length) return
+    var t = history.turns[index]
+    var agentName = String(t.agent || root.agent)
+    var cmd
+
+    if (t.sessionId && (agentName === "claude" || agentName === "grok")) {
+      cmd = agentName + " --resume " + shellQuote(t.sessionId)
+    } else {
+      cmd = "omarchy-agent --prompt " + shellQuote(String(t.prompt || ""))
+    }
+    if (t.cwd) cmd = "cd " + shellQuote(t.cwd) + " && " + cmd
+
+    Quickshell.execDetached(["omarchy-launch-tui", "--app-id=org.omarchy.agent", "sh", "-lc", cmd])
+    root.historyOpen = false
+    root.dismiss()
+  }
+
   function togglePicker() {
     root.pickerOpen = !root.pickerOpen
     if (root.pickerOpen) {
@@ -325,11 +452,31 @@ Item {
     })
   }
 
+  // Called once a turn stops, however it stopped. Persists the answer, and
+  // says so out loud when the card is closed — otherwise an answer that
+  // arrives after you walked away is an answer nobody ever reads.
+  function finishTurn() {
+    history.completeLast(root.answer, root.sessionId)
+    if (!root.opened && root.answer) {
+      var preview = root.answer.replace(/\s+/g, " ").trim()
+      if (preview.length > 120) preview = preview.substring(0, 119) + "…"
+      Quickshell.execDetached([
+        "omarchy-notification-send",
+        "Ask answered",
+        preview,
+        "--exec", "omarchy-ask", "--last"
+      ])
+    }
+  }
+
   function cancelRun() {
     if (root.runState !== "running") return
     runProc.running = false
     root.runState = "done"
     root.status = "cancelled"
+    // Keep whatever had already been written: a half answer is still an
+    // answer, and it cost the same to produce.
+    history.completeLast(root.answer, root.sessionId)
   }
 
   // A follow-up reuses the session id the agent handed back, so the card keeps
@@ -365,10 +512,12 @@ Item {
           if (ev.sessionId) root.sessionId = ev.sessionId
           root.status = ""
           root.runState = "done"
+          root.finishTurn()
         } else if (ev.kind === "error") {
           root.answer = ev.text
           root.runState = "error"
           root.status = ""
+          root.finishTurn()
         }
       }
     }
@@ -390,6 +539,7 @@ Item {
       if (exitCode !== 0 && !root.answer)
         root.answer = "The agent exited with code " + exitCode + "."
       root.status = ""
+      root.finishTurn()
     }
   }
 
@@ -498,6 +648,51 @@ Item {
           }
         }
 
+        // --------------------------------------------------------- history
+        Item {
+          id: historyKeys
+          width: parent.width
+          visible: root.historyOpen
+          implicitHeight: visible ? historyView.implicitHeight : 0
+          focus: root.historyOpen
+
+          Keys.onPressed: function (event) {
+            var ctrlMod = (event.modifiers & Qt.ControlModifier) !== 0
+            var shiftMod = (event.modifiers & Qt.ShiftModifier) !== 0
+
+            if (event.key === Qt.Key_Escape || (ctrlMod && event.key === Qt.Key_H)) {
+              root.toggleHistory()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K
+                       || (ctrlMod && event.key === Qt.Key_P)) {
+              historyView.move(-1)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J
+                       || (ctrlMod && event.key === Qt.Key_N)) {
+              historyView.move(1)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              if (shiftMod) historyView.resume()
+              else historyView.activate()
+              event.accepted = true
+            }
+          }
+
+          HistoryView {
+            id: historyView
+            width: parent.width
+            turns: history.turns
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onChosen: function (turnIndex) {
+              root.showTurn(turnIndex)
+              root.historyOpen = false
+              Qt.callLater(function () { input.forceActiveFocus() })
+            }
+            onResumeInTerminal: function (turnIndex) { root.resumeTurnInTerminal(turnIndex) }
+          }
+        }
+
         // ---------------------------------------------------------- picker
         Item {
           id: pickerKeys
@@ -589,7 +784,7 @@ Item {
 
         // ----------------------------------------------------------- input
         BorderSurface {
-          visible: !root.settingsOpen && !root.pickerOpen
+          visible: !root.settingsOpen && !root.pickerOpen && !root.historyOpen
           width: parent.width
           height: Math.max(Style.space(64), input.implicitHeight + Style.spacing.inputPaddingY * 2)
           radius: root.cornerRadius
@@ -616,10 +811,24 @@ Item {
               var shift = (event.modifiers & Qt.ShiftModifier) !== 0
 
               if (event.key === Qt.Key_Escape) {
-                // Esc walks back one step at a time: stop the run, then close.
-                // Closing mid-answer would throw away work already paid for.
-                if (root.runState === "running") root.cancelRun()
-                else root.dismiss()
+                // Closing never cancels. The agent keeps writing, the answer
+                // is recorded, and a notification brings you back to it —
+                // losing a paid-for answer to a reflex keypress is the whole
+                // problem this is meant to remove. Ctrl+C actually stops one.
+                root.dismiss()
+                event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_C && root.runState === "running"
+                         && !input.selectedText) {
+                // Only with no selection: Ctrl+C has to stay "copy" whenever
+                // there is something selected to copy.
+                root.cancelRun()
+                event.accepted = true
+              } else if (event.key === Qt.Key_Up && root.cursorOnFirstLine()) {
+                if (root.recallPrompt(1)) event.accepted = true
+              } else if (event.key === Qt.Key_Down && root.historyIndex >= 0 && root.cursorOnLastLine()) {
+                if (root.recallPrompt(-1)) event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_H) {
+                root.toggleHistory()
                 event.accepted = true
               } else if (ctrl && event.key === Qt.Key_O) {
                 root.togglePicker()
@@ -661,7 +870,7 @@ Item {
         Flow {
           width: parent.width
           spacing: Style.spacing.sm
-          visible: chipRepeater.count > 0 && !root.settingsOpen && !root.pickerOpen
+          visible: chipRepeater.count > 0 && !root.settingsOpen && !root.pickerOpen && !root.historyOpen
 
           Repeater {
             id: chipRepeater
@@ -771,7 +980,7 @@ Item {
         // ---------------------------------------------------------- answer
         Item {
           width: parent.width
-          visible: root.runState !== "idle" && !root.settingsOpen && !root.pickerOpen
+          visible: root.runState !== "idle" && !root.settingsOpen && !root.pickerOpen && !root.historyOpen
           implicitHeight: visible
             ? Math.max(Style.space(20), Math.min(answerColumn.implicitHeight, root.maxAnswerHeight))
             : 0
@@ -825,7 +1034,7 @@ Item {
 
         Rectangle {
           width: parent.width
-          visible: root.runState !== "idle" && !root.settingsOpen && !root.pickerOpen
+          visible: root.runState !== "idle" && !root.settingsOpen && !root.pickerOpen && !root.historyOpen
           height: Style.spacing.hairline
           color: root.foreground
           opacity: 0.12
@@ -840,6 +1049,10 @@ Item {
             // that still offers "send" while a run is in flight teaches the
             // wrong thing.
             model: {
+              if (root.historyOpen)
+                return [{ keys: ["enter"], label: "reopen" },
+                        { keys: ["shift", "enter"], label: "resume in terminal" },
+                        { keys: ["esc"], label: "back" }]
               if (root.pickerOpen)
                 return [{ keys: ["enter"], label: "open" },
                         { keys: ["bksp"], label: "up" },
@@ -849,7 +1062,8 @@ Item {
                 return [{ keys: ["space"], label: "change" },
                         { keys: ["esc"], label: "back" }]
               if (root.runState === "running")
-                return [{ keys: ["esc"], label: "stop" }]
+                return [{ keys: ["esc"], label: "close, keeps running" },
+                        { keys: ["ctrl", "c"], label: "stop" }]
 
               var hints = [{
                 keys: ["enter"],
@@ -863,6 +1077,7 @@ Item {
                 hints.push({ keys: ["ctrl", "r"], label: "region" })
                 hints.push({ keys: ["ctrl", "shift", "v"], label: "clip" })
                 hints.push({ keys: ["ctrl", "o"], label: "file" })
+                hints.push({ keys: ["ctrl", "h"], label: "history" })
               }
               hints.push({ keys: ["ctrl", ","], label: "settings" })
               hints.push({ keys: ["esc"], label: "close" })

@@ -83,9 +83,12 @@ context.
 | `ctrl+r` | attach a screen region (Omarchy's frozen-screen picker) |
 | `ctrl+shift+v` | attach the clipboard (image or text) |
 | `ctrl+o` | attach a file — opens the picker |
+| `↑` `↓` | recall previous prompts (from the first/last line of the box) |
+| `ctrl+h` | history — past turns, reopenable and resumable |
+| `ctrl+c` | stop a running answer |
 | `ctrl+shift+backspace` | drop the last attachment |
 | `ctrl+,` | settings |
-| `esc` | stop a running answer, then close |
+| `esc` | close — the agent keeps running |
 
 Attachments show up as chips and travel to the agent **as file paths**: every
 agent can already read a file it is pointed at, so nothing here needs a
@@ -119,6 +122,39 @@ The terminal path goes through `omarchy-agent --prompt`, which opens a window
 tagged `org.omarchy.agent`. When a working directory was captured, the agent
 starts **in** it: `omarchy-agent` redirects to `~/Work` when it starts from
 `$HOME`, so the directory has to be applied before it runs.
+
+## Nothing is lost when you close
+
+Closing the card **never cancels the agent**. The turn keeps running, the
+answer is recorded, and when it lands on a closed card a notification says so —
+clicking it reopens the card on that answer (`omarchy-ask --last`).
+
+That is the whole point of `esc` not being a cancel key: losing an answer you
+already paid for, to a reflex keypress, is exactly the failure this is meant to
+remove. `ctrl+c` stops a run when you actually mean to.
+
+Every turn is recorded in `~/.local/state/omarchy/ask/history.json` — prompt,
+answer, agent, directory, and the agent's **session id** — capped at the last
+50. Delete the file to clear it.
+
+## History
+
+`↑` recalls previous prompts the way a shell does, but only from the first line
+of the box: below that, `↑` has to stay "move the cursor up" or a multi-line
+question becomes uneditable. Whatever you were typing is handed back when you
+walk `↓` out of history.
+
+`ctrl+h` opens the full history: past turns, newest first.
+
+| Key | Does |
+|---|---|
+| `enter` | reopen the turn — answer restored, session id restored, so Enter continues it |
+| `shift+enter` | resume that session in a terminal (`claude --resume <id>`) |
+| `esc` | back |
+
+The session id is what makes this a continuation rather than a re-ask. A turn
+that has none — cancelled early, or run by an agent without adapter support —
+falls back to re-sending the prompt rather than issuing a broken resume.
 
 ## The file picker
 
