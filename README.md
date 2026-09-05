@@ -90,7 +90,10 @@ to it. `ctrl+c` stops a run when that is what you actually mean.
 **It remembers.** `↑` recalls previous prompts, shell-style. `ctrl+h` opens
 every past turn — each carrying the agent's **session id**, so reopening one
 continues that conversation instead of re-asking it, and `shift+enter` resumes
-it in a terminal through the agent's own `--resume`.
+it in a terminal through the agent's own `--resume`. That also works without
+opening history: once an answer is on screen, `shift+enter` on an empty box
+takes *that* conversation to a terminal, which is what "keep going, but where I
+can approve things" looks like in one keystroke.
 
 **It says what it is doing.** Which model answered, how much of your rate limit
 is gone, and — folded away until you want it — the agent's reasoning.
@@ -128,7 +131,7 @@ open card, without restarting anything.
 |---|---|
 | `SUPER+Q` | open / close |
 | `enter` | send — streams the answer here (or follow up, once there is one) |
-| `shift+enter` | send to a terminal agent instead |
+| `shift+enter` | send to a terminal agent instead — with the box empty, continue the answer on screen there |
 | `ctrl+enter` | newline |
 | `↑` `↓` | recall previous prompts, from the first/last line of the box |
 | `ctrl+s` | attach a shot of the window you came from |
@@ -152,20 +155,28 @@ open card, without restarting anything.
 | `grok` | yes | verified end to end against Grok 4.6: deltas, session id, tool calls |
 | everything else | no — terminal | via `omarchy-agent --prompt`, which works for all of them |
 
-The switch offers only agents that are installed **and** streamable. Two
-reasons, and the second is the one that bites:
+The switch offers only agents that are installed **and** streamable. `mise`
+decides what counts as installed — a binary on `PATH` is not enough to go on,
+because mise keeps a shim there for every tool it knows about, installed or
+not, so a naive check would offer you agents that open an install prompt the
+first time you asked them anything. Streamable, because `ctrl+shift+a` is about
+who answers *in the card*; an agent with no adapter has nothing to stream.
 
-`mise` decides what counts as installed. A binary on `PATH` is not enough to go
-on — mise keeps a shim there for every tool it knows about, installed or not, so
-a naive check offers you agents that would open an install prompt the first time
-you asked them anything.
+An agent picked here is the agent that answers, on **both** paths. That is less
+obvious than it sounds. `omarchy-agent` takes no agent argument: it reads
+`omarchy default agent` and then builds that agent's own spelling of "don't
+stop to ask" — `claude --permission-mode auto`, `grok --permission-mode
+bypassPermissions`, `codex --approve-for-me`, and six more. So the card used to
+name one agent while the terminal launched another.
 
-An agent with no adapter would be worse than useless in the switch. `enter`
-falls back to the terminal for those, and the terminal path runs
-`omarchy-agent`, which takes no agent argument: it launches whatever `omarchy
-default agent` says. So picking one in the card would show its name in the
-header while a completely different agent answered. Force one from the settings
-anyway and the header says so out loud — `codex → terminal · grok`.
+Copying that table into the plugin would mean keeping a private fork of
+Omarchy's launch policy and being silently wrong the day upstream changes a
+flag. [`bin/omarchy-ask-terminal`](bin/omarchy-ask-terminal) overrides the agent
+at the one place it is read instead: a shim at the head of `PATH` answers the
+`omarchy-default-agent` call `omarchy-agent` makes, and the flags, the app-id
+and the terminal all stay Omarchy's. If a future Omarchy stops resolving its
+agent that way the shim would quietly become a no-op, so the assumption is
+checked before launch and says so instead of running the wrong agent.
 
 Adding an agent is two pure functions in [`agents.js`](agents.js): `argv(opts)`
 and `parse(line)`. An unrecognised line returns `null` and is ignored — these

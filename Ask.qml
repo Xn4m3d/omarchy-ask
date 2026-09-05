@@ -56,6 +56,13 @@ Item {
   // the answer on send, so the box is empty and ready for a follow-up while
   // you can still see what was asked.
   property string askedPrompt: ""
+  // Which agent that question went to. Not the same as `effectiveAgent`: the
+  // switch may have moved on since, and handing the turn to a terminal has to
+  // reach the agent that holds the session.
+  property string askedAgent: ""
+  // The turn the card is showing, whether it was just asked or recalled from
+  // history. Nothing on screen means nothing to hand over.
+  readonly property bool hasCurrentTurn: root.askedPrompt !== ""
   property string thinking: ""
   property string status: ""
   property string sessionId: ""
@@ -180,6 +187,7 @@ Item {
     root.runState = "idle"
     root.historyIndex = -1
     root.askedPrompt = ""
+    root.askedAgent = ""
     input.text = ""
   }
 
@@ -195,6 +203,7 @@ Item {
     // reopening a turn is for continuing it, and a box pre-filled with the
     // question you already asked makes Enter re-ask it.
     root.askedPrompt = String(t.prompt || "")
+    root.askedAgent = String(t.agent || "")
     input.text = ""
     root.answer = String(t.answer || "")
     root.sessionId = String(t.sessionId || "")
@@ -492,6 +501,7 @@ Item {
 
     // Only after argv is built: composePrompt() reads the box.
     root.markContextSent()
+    root.askedAgent = root.effectiveAgent
     root.askedPrompt = text
     input.text = ""
     root.historyIndex = -1
@@ -542,25 +552,34 @@ Item {
     Qt.callLater(function () { root.focusActiveSurface() })
   }
 
-  // Hand a recorded session to a real terminal. The agent's own --resume is
-  // what makes this a continuation rather than a re-ask, so an entry without a
-  // session id gets the prompt back instead of a broken resume.
-  function resumeTurnInTerminal(index) {
-    if (index < 0 || index >= history.turns.length) return
-    var t = history.turns[index]
-    var agentName = String(t.agent || root.agent)
-    var cmd
+  // Hand a turn to a real terminal: the same conversation, continued where
+  // approvals are visible. `omarchy-ask-terminal` decides between the agent's
+  // own --resume and a plain re-ask, which is why both are sent -- an agent
+  // without resume still gets its question rather than an empty terminal.
+  function resumeTurnInTerminal(turn) {
+    if (!turn) return
+    var prompt = String(turn.prompt || "")
+    var sessionId = String(turn.sessionId || "")
+    if (!prompt && !sessionId) return
 
-    if (t.sessionId && (agentName === "claude" || agentName === "grok")) {
-      cmd = agentName + " --resume " + shellQuote(t.sessionId)
-    } else {
-      cmd = "omarchy-agent --prompt " + shellQuote(String(t.prompt || ""))
-    }
-    if (t.cwd) cmd = "cd " + shellQuote(t.cwd) + " && " + cmd
+    var argv = ["omarchy-ask-terminal", "--agent", String(turn.agent || root.effectiveAgent)]
+    if (turn.cwd) argv = argv.concat(["--cwd", String(turn.cwd)])
+    if (sessionId) argv = argv.concat(["--resume", sessionId])
+    if (prompt) argv = argv.concat(["--prompt", prompt])
 
-    Quickshell.execDetached(["omarchy-launch-tui", "--app-id=org.omarchy.agent", "sh", "-lc", cmd])
+    root.runInTerminal(argv)
     root.historyOpen = false
     root.dismiss()
+  }
+
+  // Everything that opens a terminal goes through here. `sh -lc` rather than a
+  // direct spawn: the shell Quickshell inherited need not have ~/.local/bin on
+  // PATH, and that is where the plugin's own commands live.
+  function runInTerminal(argv) {
+    var cmd = ""
+    for (var i = 0; i < argv.length; i++)
+      cmd += (i ? " " : "") + shellQuote(String(argv[i]))
+    Quickshell.execDetached(["sh", "-lc", cmd])
   }
 
   function togglePicker() {
@@ -744,19 +763,37 @@ Item {
     }
   }
 
+  // Shift+Enter. With something in the box it sends that question to a
+  // terminal; with the box empty it takes the turn already on screen there,
+  // which is what "I want to keep going, but with approvals" looks like once
+  // an answer has landed.
   function submitToTerminal() {
     var text = input.text.trim()
-    if (!text) return
+    if (!text) {
+      root.resumeCurrentTurn()
+      return
+    }
     // Always the full block: this opens a new agent, which has been told
     // nothing, whatever the card has already sent inline.
-    var prompt = composePrompt(true)
-    var cmd = "omarchy-agent --prompt " + shellQuote(prompt)
+    var argv = ["omarchy-ask-terminal", "--agent", root.effectiveAgent,
+                "--prompt", composePrompt(true)]
     // omarchy-agent redirects to ~/Work when it starts from $HOME, so the
     // captured directory has to be applied before it runs, not after.
-    if (root.ctxCwd) cmd = "cd " + shellQuote(root.ctxCwd) + " && " + cmd
-    Quickshell.execDetached(["sh", "-lc", cmd])
+    if (root.ctxCwd) argv = argv.concat(["--cwd", root.ctxCwd])
+    root.runInTerminal(argv)
     input.text = ""
     root.dismiss()
+  }
+
+
+  function resumeCurrentTurn() {
+    if (!root.hasCurrentTurn) return
+    root.resumeTurnInTerminal({
+      prompt: root.askedPrompt,
+      agent: root.askedAgent || root.effectiveAgent,
+      cwd: root.ctxCwd,
+      sessionId: root.sessionId
+    })
   }
 
   Process {
@@ -884,16 +921,12 @@ Item {
               text: {
                 var name = root.effectiveAgent || "no default agent"
 
-                // Forced to an agent this card cannot stream -- only reachable
-                // from the settings list. Enter goes to a terminal, and the
-                // terminal runs the Omarchy default. Say so, rather than
-                // printing a name that will not be the one answering.
-                if (root.effectiveAgent && !root.inlineAvailable) {
-                  name += " → terminal"
-                  if (root.agent && root.agent !== root.effectiveAgent)
-                    name += " · " + root.agent
-                  return name
-                }
+                // An agent this card cannot stream still answers -- in a
+                // terminal, under its own name, because omarchy-ask-terminal
+                // overrides the default. Only where the answer lands changes,
+                // so that is the only thing worth saying.
+                if (root.effectiveAgent && !root.inlineAvailable)
+                  return name + " → terminal"
 
                 if (root.model) name += " · " + root.shortModel(root.model)
                 return name
@@ -970,7 +1003,7 @@ Item {
               root.historyOpen = false
               Qt.callLater(function () { root.focusActiveSurface() })
             }
-            onResumeInTerminal: function (turnIndex) { root.resumeTurnInTerminal(turnIndex) }
+            onResumeInTerminal: function (turnIndex) { root.resumeTurnInTerminal(history.turns[turnIndex]) }
           }
         }
 
@@ -1528,7 +1561,13 @@ Item {
                   ? (root.inlineAvailable ? "send" : "send to terminal")
                   : "follow up"
               }]
-              hints.push({ keys: ["shift", "enter"], label: "terminal" })
+              // With an empty box Shift+Enter no longer sends anything: it
+              // hands the answer on screen to a terminal. Saying "terminal"
+              // for both would be a legend that means two different things.
+              if (root.hasCurrentTurn && input.text.trim() === "")
+                hints.push({ keys: ["shift", "enter"], label: "continue in terminal" })
+              else
+                hints.push({ keys: ["shift", "enter"], label: "terminal" })
               if (root.answer) hints.push({ keys: ["ctrl", "shift", "c"], label: "copy" })
               if (root.thinking) hints.push({ keys: ["ctrl", "t"], label: "reasoning" })
               if (root.runState === "idle") {

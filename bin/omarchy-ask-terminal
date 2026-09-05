@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# Hand a question to a real agent terminal, running the agent the card names.
+#
+# `omarchy-agent` takes no agent argument. It reads `omarchy-default-agent` and
+# then builds that agent's own spelling of "don't stop to ask" -- claude
+# --permission-mode auto, grok --permission-mode bypassPermissions, codex
+# --approve-for-me, and six more. Restating that table here would mean keeping
+# a private copy of Omarchy's launch policy and being silently wrong about it
+# the day upstream changes a flag.
+#
+# So the agent is overridden at the one place it is read: a shim at the head of
+# PATH answers the lookup `omarchy-agent` performs, and the flags, the app-id
+# and the terminal all stay Omarchy's.
+
+set -euo pipefail
+
+agent=""
+prompt=""
+resume=""
+cwd=""
+
+while (($#)); do
+  case "$1" in
+    --agent) agent=${2-}; shift 2 ;;
+    --prompt) prompt=${2-}; shift 2 ;;
+    --resume) resume=${2-}; shift 2 ;;
+    --cwd) cwd=${2-}; shift 2 ;;
+    *) echo "Unexpected argument: $1" >&2; exit 1 ;;
+  esac
+done
+
+[[ -n $prompt || -n $resume ]] || { echo "Nothing to send: pass --prompt or --resume" >&2; exit 1; }
+
+die() {
+  # The card is gone by the time this runs, so an error on stderr would be an
+  # error nobody sees. A notification is the only channel left.
+  echo "$1" >&2
+  command -v omarchy-notification-send >/dev/null 2>&1 &&
+    omarchy-notification-send "Ask" "$1"
+  exit 1
+}
+
+# A directory that cannot be entered must not be silently ignored: it is the
+# difference between the agent starting in the project you asked from and
+# starting wherever the shell happened to be.
+if [[ -n $cwd ]]; then
+  [[ -d $cwd && -x $cwd ]] || die "Cannot start in $cwd"
+  cd "$cwd"
+fi
+
+default=$(omarchy-default-agent 2>/dev/null || true)
+[[ -n $agent ]] || agent=$default
+
+# Resuming is the agent's own feature, not Omarchy's, so it bypasses
+# omarchy-agent entirely -- and only for the agents that have it. Anything else
+# falls back to re-asking, which is why the caller sends both.
+if [[ -n $resume && ($agent == "claude" || $agent == "grok") ]]; then
+  exec omarchy-launch-tui --app-id=org.omarchy.agent "$agent" --resume "$resume"
+fi
+
+[[ -n $prompt ]] || die "$agent cannot resume a session, and no prompt was given"
+
+# Nothing to override: the plain path, with none of the machinery below.
+if [[ -z $agent || $agent == "$default" ]]; then
+  exec omarchy-agent --prompt "$prompt"
+fi
+
+launcher=$(command -v omarchy-agent) || die "omarchy-agent is not installed"
+
+# The override only works because omarchy-agent looks the default up through
+# PATH. If a future Omarchy reads ~/.config/omarchy/defaults/agent directly,
+# the shim becomes a no-op and this would quietly launch the wrong agent --
+# exactly the bug it exists to fix. Better to say so than to be wrong quietly.
+grep -q 'omarchy-default-agent' "$launcher" ||
+  die "This Omarchy build no longer resolves its agent through omarchy-default-agent, so ask cannot launch $agent instead of $default."
+
+real=$(command -v omarchy-default-agent) || die "omarchy-default-agent is not installed"
+
+shim_dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-ask/agent-shim"
+mkdir -p "$shim_dir"
+cat >"$shim_dir/omarchy-default-agent" <<EOF
+#!/bin/bash
+# Written by omarchy-ask-terminal. Answers the no-argument lookup that
+# omarchy-agent makes with the agent chosen on the card; every other call --
+# setting a new default included -- is the real command.
+if ((\$# == 0)) && [[ -n \${OMARCHY_ASK_AGENT:-} ]]; then
+  printf '%s\n' "\$OMARCHY_ASK_AGENT"
+  exit 0
+fi
+exec $(printf '%q' "$real") "\$@"
+EOF
+chmod +x "$shim_dir/omarchy-default-agent"
+
+export OMARCHY_ASK_AGENT=$agent
+export PATH="$shim_dir:$PATH"
+exec omarchy-agent --prompt "$prompt"
