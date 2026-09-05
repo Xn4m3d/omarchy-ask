@@ -9,6 +9,6 @@ type_text "what is this crate missing?"
 sleep 0.4
 key o            # ctrl+o -- open the picker
 sleep 1.0
-type_text "ro"   # filter down to router.rs
+type_text "car" # narrow to the Cargo files
 sleep 0.8
 shot "$DOCS/picker.png"

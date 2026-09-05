@@ -7,28 +7,10 @@ your default Omarchy agent — with the window you were looking at, the director
 you were in, and anything you chose to attach — and the answer streams back in
 place.
 
-```
-┌────────────────────────────────────────────────────────────┐
-│ ● ask                                       claude · opus-5│
-│                                        5h 83% · 7d 9% · Pro│
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │ why is this build failing?                            │ │
-│  └───────────────────────────────────────────────────────┘ │
-│  [win] foot   [dir] ~/Projects/api   [img] region shot ×   │
-│ ────────────────────────────────────────────────────────── │
-│  why is this build failing?                        ┌──────┐│
-│                                                    │ copy ││
-│ ▎Your lockfile is out of sync with package.json.   └──────┘│
-│ ▎Run `bun install` to regenerate it — the CI image         │
-│ ▎pins bun 1.1, the lockfile was written by 1.2.▋           │
-│ ────────────────────────────────────────────────────────── │
-│ [enter] follow up  [shift][enter] terminal  [esc] close    │
-└────────────────────────────────────────────────────────────┘
-```
+![A question typed into the card, and the answer streaming back into it](docs/streaming.gif)
 
-> **Screenshots and short screen recordings — soon.** The card streams, pulses
-> and animates, so it deserves moving images rather than a still; they will land
-> in [`docs/`](docs/), one per feature.
+*Typed, sent, answered in place. Recorded on a stock Omarchy desktop; the pauses
+where nothing moves are collapsed, nothing else is.*
 
 ---
 
@@ -76,6 +58,8 @@ else falls back to a terminal, which is generic by construction — see
 
 ## What it does
 
+![The composer, carrying the window and directory it was opened from](docs/card.png)
+
 **It brings the context with it.** The class and title of the window you came
 from, and — for a terminal — the working directory, resolved from the shell
 running inside it. The agent starts *in* that directory, so "why is this
@@ -101,6 +85,8 @@ changes files belongs in the terminal, where approvals are in front of you.
 turn keeps running, the answer is recorded, and a notification brings you back
 to it. `ctrl+c` stops a run when that is what you actually mean.
 
+![Past turns, each with its agent and how long ago it was asked](docs/history.png)
+
 **It remembers.** `↑` recalls previous prompts, shell-style. `ctrl+h` opens
 every past turn — each carrying the agent's **session id**, so reopening one
 continues that conversation instead of re-asking it, and `shift+enter` resumes
@@ -108,6 +94,8 @@ it in a terminal through the agent's own `--resume`.
 
 **It says what it is doing.** Which model answered, how much of your rate limit
 is gone, and — folded away until you want it — the agent's reasoning.
+
+![The clipboard and a file becoming chips under the question](docs/attachments.gif)
 
 **It says things once.** The context block and the attachment paths go out on
 the first turn of a session and not again. A follow-up resumes that session, so
@@ -117,11 +105,21 @@ every single turn. Attach something new mid-conversation and only that is
 announced. The terminal path still sends everything, because `shift+enter`
 starts an agent that has been told nothing.
 
+![The agent name in the header changing as ctrl+shift+a cycles through them](docs/agents.gif)
+
 **It switches agents mid-thought.** `ctrl+shift+a` — or a click on the agent's
 name — moves to the next agent *installed on this machine*, asked of `mise` the
 same way Omarchy asks before offering to install one. No menu of agents you do
 not have. The choice is the plugin's own: `omarchy default agent` keeps whatever
 the rest of your desktop was told to use.
+
+![The same card under Solitude, Tokyo Night and Catppuccin Latte](docs/themes.png)
+
+Nothing in the card names a colour. It is built out of the shell's own `[menu]`
+surface tokens, which are file-watched — so setting an Omarchy theme restyles an
+open card, without restarting anything.
+
+![The file picker, narrowed by typing](docs/picker.png)
 
 ## Keys
 
@@ -163,6 +161,8 @@ and `parse(line)`. An unrecognised line returns `null` and is ignored — these
 formats gain event types over time, and an unknown line must never be fatal.
 
 ## Settings — `ctrl+,`
+
+![The settings screen, listing every switch the card has](docs/settings.png)
 
 Space changes the selected value; booleans flip, enums advance.
 

@@ -55,11 +55,17 @@ _saved_agent=""
 _saved_theme=""
 _saved_awake=""
 _made_fixture=0
+_saved_config=""
 
 stage_enter() {
   for tool in grim wtype ffmpeg magick jq; do
     command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
   done
+
+  # Several captures change plugin settings (the agent switch walks through
+  # every installed agent). Put the file back the way it was found.
+  _saved_config="$WORK/ask.json.backup"
+  [[ -f $HOME/.config/omarchy/ask.json ]] && cp "$HOME/.config/omarchy/ask.json" "$_saved_config"
 
   _saved_ws=$(hyprctl activeworkspace -j | jq -r '.id')
   _saved_agent=$(omarchy-default-agent)
@@ -94,6 +100,14 @@ pub struct Router {
 }
 EOF
     printf '# pathfinder\n' >"$FIXTURE/README.md"
+
+    # Enough of a tree that the picker has something to pick from and the
+    # filter has something to narrow.
+    mkdir -p "$FIXTURE/tests"
+    : >"$FIXTURE/Cargo.lock"
+    : >"$FIXTURE/rustfmt.toml"
+    for f in main.rs config.rs pool.rs tls.rs; do : >"$FIXTURE/src/$f"; done
+    : >"$FIXTURE/tests/router.rs"
   fi
 
   focus_ws "$STAGE_WS"
@@ -110,6 +124,7 @@ stage_leave() {
   [[ -n $_saved_theme && $_saved_theme != "$(omarchy-theme-current)" ]] \
     && omarchy-theme-set "$_saved_theme" >/dev/null 2>&1
   [[ $_saved_awake == "off" ]] && omarchy-toggle-idle allow-idle >/dev/null
+  [[ -n $_saved_config && -f $_saved_config ]] && cp "$_saved_config" "$HOME/.config/omarchy/ask.json"
   ((_made_fixture)) && rm -rf "$FIXTURE"
   rm -rf "$WORK"
 }
@@ -153,10 +168,13 @@ press() { wtype -k "$1"; }
 shot() {
   local out=$1 crop=${2:-$CROP}
   grim -l 1 "$WORK/raw.png"
+  # -strip drops the capture metadata, and 1200px is about as wide as GitHub
+  # renders a README image anyway. Both together roughly halve the repo's
+  # share of these files.
   if [[ $crop == "full" ]]; then
-    magick "$WORK/raw.png" -resize 1600x "$out"
+    magick "$WORK/raw.png" -resize 1400x -strip "$out"
   else
-    magick "$WORK/raw.png" -crop "$crop" +repage "$out"
+    magick "$WORK/raw.png" -crop "$crop" +repage -resize 1200x\> -strip "$out"
   fi
 }
 
