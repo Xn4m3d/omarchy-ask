@@ -160,17 +160,48 @@ shot() {
   fi
 }
 
-# Record until the caller's condition script says stop, or the frame budget
-# runs out. Frames are numbered so ffmpeg can read them as a sequence.
+# Frames are captured full-screen and cropped later by ffmpeg. grim can crop
+# itself, but its -g geometry is in logical pixels while the file it writes is
+# in physical ones, and getting that conversion wrong costs a whole take.
+#
+# Runs until the frame budget is spent or the stop file appears, so the caller
+# can drive the card in the foreground while this records behind it.
 record_frames() {
-  local dir=$1 max=$2
+  local dir=$1 max=$2 stop=${3:-}
   mkdir -p "$dir"
-  local i=0
+  local i=0 delay
+  delay=$(awk -v f="$FPS" 'BEGIN{print 1/f}')
   while ((i < max)); do
+    [[ -n $stop && -e $stop ]] && break
     grim -l 0 "$(printf '%s/f%04d.png' "$dir" "$i")"
     ((i++))
-    sleep "$(awk -v f="$FPS" 'BEGIN{print 1/f}')"
+    sleep "$delay"
   done
+}
+
+# Block until the card has finished the turn that asked $1 at or after $2 (an
+# epoch second, taken just before sending). The history file is the honest
+# signal: the overlay writes the answer back into it when the turn ends,
+# whether it succeeded or failed.
+#
+# The timestamp is not optional. The prompt alone is not a unique key -- re-run
+# a capture and the previous take is still in the file, already answered, and
+# the wait returns before this run has even started.
+wait_for_answer() {
+  local prompt=$1 since=$2 budget=${3:-120}
+  local hist="$HOME/.local/state/omarchy/ask/history.json"
+  local waited=0
+  while ((waited < budget)); do
+    if jq -e --arg p "$prompt" --argjson t "$since" \
+         '.[0] | select(.prompt == $p and .ts >= $t) | (.answer | length) > 0' \
+         "$hist" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    ((waited++))
+  done
+  echo "warning: no answer recorded for: $prompt" >&2
+  return 1
 }
 
 # Two passes: a palette built from the whole clip, then the clip mapped onto
@@ -179,7 +210,11 @@ record_frames() {
 to_gif() {
   local dir=$1 out=$2 width=${3:-900}
   local filters="crop=${CROP%%+*}:${CROP#*+}"
-  filters="crop=$(echo "$CROP" | sed 's/x/:/;s/+/:/g'),scale=$width:-1:flags=lanczos"
+  # mpdecimate drops frames identical to the one before them. On a recording of
+  # a model answering, that is the wait before the first token -- seconds of a
+  # still card that would otherwise be most of the file. Nothing that moved is
+  # removed, and docs/README.md says the pauses are collapsed.
+  filters="crop=$(echo "$CROP" | sed 's/x/:/;s/+/:/g'),mpdecimate=hi=200:lo=100:frac=0.02,setpts=N/FRAME_RATE/TB,scale=$width:-1:flags=lanczos"
   ffmpeg -y -loglevel error -framerate "$FPS" -i "$dir/f%04d.png" \
     -vf "$filters,palettegen=stats_mode=diff" "$WORK/pal.png" || return 1
   ffmpeg -y -loglevel error -framerate "$FPS" -i "$dir/f%04d.png" -i "$WORK/pal.png" \

@@ -80,6 +80,12 @@ Item {
   // the detector answers, which is why the switch is offered only once it has
   // more than one name to offer.
   property var installedAgents: []
+
+  // What the agent running this session has already been told. A follow-up
+  // goes out with --resume, so the context block and the attachment paths are
+  // things it already has.
+  property bool contextSent: false
+  property var attachmentsSent: []
   readonly property bool canSwitchAgent: root.installedAgents.length > 1
 
   property string model: ""
@@ -166,6 +172,8 @@ Item {
     root.attachments = []
     root.notice = ""
     root.sessionId = ""
+    root.contextSent = false
+    root.attachmentsSent = []
     root.answer = ""
     root.thinking = ""
     root.status = ""
@@ -190,6 +198,10 @@ Item {
     input.text = ""
     root.answer = String(t.answer || "")
     root.sessionId = String(t.sessionId || "")
+    // That session was given its context on the turn being recalled, so
+    // continuing it does not repeat the block.
+    root.contextSent = root.sessionId !== ""
+    root.attachmentsSent = []
     root.ctxCwd = String(t.cwd || "")
     root.attachments = []
     root.status = ""
@@ -378,30 +390,59 @@ Item {
 
   // The context block mirrors the shape omarchy-agent-crash uses: plain facts
   // under a short heading, so any agent reads it without special handling.
-  function composePrompt() {
+  // `full` forces the whole context block. The terminal path needs it every
+  // time -- it starts a brand new agent that knows nothing -- while an inline
+  // follow-up resumes a session that was already told all of this.
+  //
+  // Repeating it would not just waste tokens restating the window and the
+  // directory. "Read the attached files listed above" repeated on every turn
+  // makes the agent read them again on every turn, and for a screenshot or a
+  // large file that is a real bill for no new information. Worse, it drags a
+  // follow-up as short as "why?" back to the attachment instead of the answer.
+  function composePrompt(full) {
     var lines = [input.text.trim()]
     var facts = []
 
-    if (root.ctxClass)
-      facts.push("  focused window:  " + root.ctxClass + (root.ctxTitle ? " — " + root.ctxTitle : ""))
-    if (root.ctxCwd)
-      facts.push("  working dir:     " + root.ctxCwd)
+    var continuing = !full && root.sessionId !== "" && root.contextSent
+
+    if (!continuing) {
+      if (root.ctxClass)
+        facts.push("  focused window:  " + root.ctxClass + (root.ctxTitle ? " — " + root.ctxTitle : ""))
+      if (root.ctxCwd)
+        facts.push("  working dir:     " + root.ctxCwd)
+    }
 
     // Attachments travel as paths, not as an upload protocol: every agent can
     // already read a file it is pointed at, so this stays agent-agnostic.
+    // Anything attached since the last turn still has to be announced, even
+    // mid-conversation -- that is the whole point of attaching it now.
+    var fresh = 0
     for (var i = 0; i < root.attachments.length; i++) {
       var a = root.attachments[i]
+      if (continuing && root.attachmentsSent.indexOf(a.path) >= 0) continue
       facts.push("  attached (" + a.kind + "):  " + a.path)
+      fresh++
     }
 
     if (facts.length) {
       lines.push("")
-      lines.push("Context captured on this Omarchy machine when I asked:")
+      lines.push(continuing
+                 ? "Also attached on this Omarchy machine:"
+                 : "Context captured on this Omarchy machine when I asked:")
       lines.push(facts.join("\n"))
-      if (root.attachments.length)
+      if (fresh)
         lines.push("\nRead the attached files listed above before answering.")
     }
     return lines.join("\n")
+  }
+
+  // Called once a turn has actually been handed to the agent: from here on,
+  // this session has the context and these attachments.
+  function markContextSent() {
+    root.contextSent = true
+    var paths = []
+    for (var i = 0; i < root.attachments.length; i++) paths.push(root.attachments[i].path)
+    root.attachmentsSent = paths
   }
 
   // ------------------------------------------------------------- inline run
@@ -436,7 +477,7 @@ Item {
 
     runProc.adapter = adapter
     runProc.command = adapter.argv({
-      prompt: root.composePrompt(),
+      prompt: root.composePrompt(false),
       cwd: root.ctxCwd,
       sessionId: root.sessionId,
       allowedTools: String(config.get("inlineTools") || Agents.READ_ONLY_TOOLS),
@@ -450,6 +491,7 @@ Item {
     runProc.running = true
 
     // Only after argv is built: composePrompt() reads the box.
+    root.markContextSent()
     root.askedPrompt = text
     input.text = ""
     root.historyIndex = -1
@@ -581,8 +623,10 @@ Item {
 
     // A session id belongs to the agent that issued it. Carrying one across a
     // switch would ask the new agent to resume a conversation it never had,
-    // so the next question starts a fresh one.
+    // so the next question starts a fresh one -- context block included.
     root.sessionId = ""
+    root.contextSent = false
+    root.attachmentsSent = []
     root.model = ""
   }
 
@@ -698,7 +742,9 @@ Item {
   function submitToTerminal() {
     var text = input.text.trim()
     if (!text) return
-    var prompt = composePrompt()
+    // Always the full block: this opens a new agent, which has been told
+    // nothing, whatever the card has already sent inline.
+    var prompt = composePrompt(true)
     var cmd = "omarchy-agent --prompt " + shellQuote(prompt)
     // omarchy-agent redirects to ~/Work when it starts from $HOME, so the
     // captured directory has to be applied before it runs, not after.

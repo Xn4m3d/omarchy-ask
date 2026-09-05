@@ -109,6 +109,14 @@ it in a terminal through the agent's own `--resume`.
 **It says what it is doing.** Which model answered, how much of your rate limit
 is gone, and — folded away until you want it — the agent's reasoning.
 
+**It says things once.** The context block and the attachment paths go out on
+the first turn of a session and not again. A follow-up resumes that session, so
+repeating them would spend tokens restating what the agent already has — and
+repeating *"read the attached files"* would make it re-read a screenshot on
+every single turn. Attach something new mid-conversation and only that is
+announced. The terminal path still sends everything, because `shift+enter`
+starts an agent that has been told nothing.
+
 **It switches agents mid-thought.** `ctrl+shift+a` — or a click on the agent's
 name — moves to the next agent *installed on this machine*, asked of `mise` the
 same way Omarchy asks before offering to install one. No menu of agents you do
@@ -191,6 +199,9 @@ Built and exercised on a single machine. Being straight about which is which:
 - Closing mid-run leaves the agent running and the answer recorded.
 - Follow-ups reuse the session id — the answer stays on topic when the question
   no longer names the topic.
+- A follow-up carries the question alone. Read back out of Claude Code's own
+  session transcript: turn one holds the context block and the attachment,
+  turn two holds four words.
 - `ctrl+shift+c` really puts the answer on the clipboard.
 - Live theme switching restyles the open card (Solitude → Catppuccin → Gruvbox).
 - Empty history, empty directory, unreadable directory, and filenames with
