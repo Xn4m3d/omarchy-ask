@@ -44,6 +44,12 @@ Item {
 
   // Inline run state: "idle" | "running" | "done" | "error".
   property string runState: "idle"
+
+  // Whether the current run has written anything at all. It is the only
+  // safe basis for declaring a run dead on a timer: a live agent prints
+  // something within seconds, and a run that has been silent from the start
+  // never started at all.
+  property bool sawOutput: false
   property string answer: ""
 
   // The question this answer belongs to. It moves out of the input and above
@@ -430,7 +436,11 @@ Item {
       allowedTools: String(config.get("inlineTools") || Agents.READ_ONLY_TOOLS),
       reasoningTokens: Number(config.get("reasoningTokens") || 0)
     })
-    if (root.ctxCwd) runProc.workingDirectory = root.ctxCwd
+    // Assigned every run, never conditionally: workingDirectory persists on
+    // the Process, so a stale one would quietly follow the next question into
+    // a directory that has nothing to do with it.
+    runProc.workingDirectory = root.ctxCwd
+    root.sawOutput = false
     runProc.running = true
 
     // Only after argv is built: composePrompt() reads the box.
@@ -549,12 +559,36 @@ Item {
     root.submitInline()
   }
 
+  // Quickshell's Process exposes `started` and `exited` and nothing else: a
+  // spawn that fails outright -- an unreadable working directory, a binary
+  // that is not on PATH -- emits neither, and the card would sit on
+  // "thinking..." waiting for output that is never coming. This is the floor
+  // under that. It is deliberately generous: it exists to make a wedged card
+  // impossible, not to put a deadline on a slow answer.
+  Timer {
+    interval: 45000
+    running: root.runState === "running" && !root.sawOutput
+    onTriggered: {
+      if (root.runState !== "running" || root.sawOutput) return
+      runProc.running = false
+      root.answer = root.effectiveAgent + " produced no output. It may not have "
+                  + "been able to start"
+                  + (root.ctxCwd ? " in " + root.ctxCwd : "") + "."
+      root.runState = "error"
+      root.status = ""
+      root.finishTurn()
+    }
+  }
+
   Process {
     id: runProc
     property var adapter: null
 
     stdout: SplitParser {
       onRead: function (line) {
+        // Before the adapter, and whatever it makes of the line: any byte on
+        // stdout proves the process exists, which is all the guard below asks.
+        root.sawOutput = true
         if (!runProc.adapter) return
         var ev = runProc.adapter.parse(line)
         if (!ev) return

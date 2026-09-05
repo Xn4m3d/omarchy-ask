@@ -46,11 +46,19 @@ done
 # short-lived process happens to be running, whose /proc entry is often gone
 # by the time we read it.
 window_cwd() {
-  local pid=$1 child
+  local pid=$1 child dir
   [[ $pid =~ ^[0-9]+$ ]] || return 0
   child=$(pgrep -P "$pid" 2>/dev/null | head -1) || return 0
   [[ -n $child ]] || return 0
-  readlink "/proc/$child/cwd" 2>/dev/null || true
+  dir=$(readlink "/proc/$child/cwd" 2>/dev/null) || return 0
+
+  # A directory that has been deleted or cannot be entered must never be
+  # reported. It becomes the agent's working directory, and a process that
+  # cannot chdir into it fails to start without ever emitting `exited` --
+  # which the overlay reads as a run that is still going, for good.
+  [[ -d $dir && -x $dir ]] || return 0
+
+  printf '%s\n' "$dir"
 }
 
 active=$(hyprctl activewindow -j 2>/dev/null)
