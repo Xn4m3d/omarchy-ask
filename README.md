@@ -1,4 +1,4 @@
-# ask
+# Ask Anywhere
 
 **Ask your coding agent anything, from anywhere, without losing what you were doing.**
 
