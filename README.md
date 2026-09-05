@@ -30,6 +30,27 @@ o.bind("SUPER + Q", "Ask agent", "omarchy-ask")
 That is the whole installation. **No package to install, no service to enable,
 no API key to paste.**
 
+## Remove
+
+```bash
+omarchy plugin remove xn4m3d.ask
+rm -f ~/.local/bin/omarchy-ask*
+```
+
+Then delete the `SUPER + Q` line from `~/.config/hypr/bindings.lua`.
+
+Nothing else of yours is touched by the install, so nothing else needs undoing.
+Two files are written the first time you use the card, and they outlive an
+uninstall on purpose — delete them if you want the machine clean:
+
+```bash
+rm -f  ~/.config/omarchy/ask.json                    # settings
+rm -rf ~/.local/state/omarchy/ask                    # prompt and answer history
+```
+
+Attachments live in `$XDG_RUNTIME_DIR`, so they are gone at the next reboot
+whatever you do.
+
 ## Why there is nothing to set up
 
 On Omarchy every moving part this needs is already running. `ask` is glue, not
@@ -354,4 +375,10 @@ Built against **Omarchy 4.0.2** / **Hyprland 0.56.2**.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+No dependency to declare: everything the plugin calls is already part of an
+Omarchy install (`hyprctl`, `grim`, `slurp`, `wl-clipboard`, `jq`,
+`omarchy-agent`, `omarchy-launch-tui`, `omarchy-notification-send`). The agents
+themselves are yours, installed and authenticated by `omarchy default agent`,
+and the plugin never ships or bundles one.
