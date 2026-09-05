@@ -76,6 +76,12 @@ Item {
   }
   readonly property bool inlineAvailable: Agents.supportsInline(root.effectiveAgent)
 
+  // The agents actually installed on this machine, in cycle order. Empty until
+  // the detector answers, which is why the switch is offered only once it has
+  // more than one name to offer.
+  property var installedAgents: []
+  readonly property bool canSwitchAgent: root.installedAgents.length > 1
+
   property string model: ""
   property bool thinkingOpen: false
 
@@ -559,6 +565,46 @@ Item {
     root.submitInline()
   }
 
+  // Move to the next installed agent. This writes the plugin's own setting and
+  // never touches `omarchy default agent`: the rest of the desktop keeps the
+  // agent it was told to use, and the card remembers the one you last picked
+  // here. The settings panel is still the way back to "follow the default".
+  function cycleAgent(delta) {
+    var list = root.installedAgents
+    if (list.length < 2) return
+
+    var at = list.indexOf(root.effectiveAgent)
+    var next = list[(((at < 0 ? 0 : at + delta) % list.length) + list.length) % list.length]
+    if (next === root.effectiveAgent) return
+
+    config.set("agent", next)
+
+    // A session id belongs to the agent that issued it. Carrying one across a
+    // switch would ask the new agent to resume a conversation it never had,
+    // so the next question starts a fresh one.
+    root.sessionId = ""
+    root.model = ""
+  }
+
+  // Which agents exist here is a fact about the machine, not about this run:
+  // read once when the card is built, not on every open.
+  Process {
+    id: agentsProc
+    running: true
+    command: ["omarchy-ask-agents"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var found = []
+        var lines = text.split("\n")
+        for (var i = 0; i < lines.length; i++) {
+          var name = lines[i].trim()
+          if (name) found.push(name)
+        }
+        root.installedAgents = found
+      }
+    }
+  }
+
   // Quickshell's Process exposes `started` and `exited` and nothing else: a
   // spawn that fails outright -- an unreadable working directory, a binary
   // that is not on PATH -- emits neither, and the card would sit on
@@ -600,6 +646,9 @@ Item {
         } else if (ev.kind === "rate") {
           usage.livePercent = ev.percent
           usage.liveWindow = ev.window
+        } else if (ev.kind === "break") {
+          // Only between blocks, never before the first one.
+          if (root.answer) root.answer += "\n\n"
         } else if (ev.kind === "delta") {
           root.answer += ev.text
           root.status = ""
@@ -790,6 +839,19 @@ Item {
               opacity: root.effectiveAgent ? 1 : 0.5
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
+
+              // The name of the agent is also the control that changes it.
+              // Nothing else in the header is clickable, so this needs no
+              // affordance beyond the cursor.
+              MouseArea {
+                anchors.fill: parent
+                enabled: root.canSwitchAgent
+                cursorShape: Qt.PointingHandCursor
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: function (mouse) {
+                  root.cycleAgent(mouse.button === Qt.RightButton ? -1 : 1)
+                }
+              }
             }
 
             Text {
@@ -952,7 +1014,7 @@ Item {
             anchors.fill: parent
             anchors.margins: Style.spacing.inputPaddingY
             wrapMode: TextArea.Wrap
-            placeholderText: "Ask " + (root.agent || "an agent") + "…"
+            placeholderText: "Ask " + (root.effectiveAgent || "an agent") + "…"
             color: root.foreground
             placeholderTextColor: Qt.darker(root.foreground, 1.6)
             selectionColor: Style.selectionFillFor(root.foreground, Color.accent)
@@ -991,6 +1053,11 @@ Item {
                 if (root.recallPrompt(1)) event.accepted = true
               } else if (event.key === Qt.Key_Down && root.historyIndex >= 0 && root.cursorOnLastLine()) {
                 if (root.recallPrompt(-1)) event.accepted = true
+              } else if (ctrl && shift && event.key === Qt.Key_A) {
+                // Shift is not optional: plain Ctrl+A has to stay select-all in
+                // a text box.
+                root.cycleAgent(1)
+                event.accepted = true
               } else if (ctrl && event.key === Qt.Key_H) {
                 root.toggleHistory()
                 event.accepted = true
@@ -1407,6 +1474,8 @@ Item {
                 hints.push({ keys: ["ctrl", "o"], label: "file" })
                 hints.push({ keys: ["ctrl", "h"], label: "history" })
               }
+              if (root.canSwitchAgent)
+                hints.push({ keys: ["ctrl", "shift", "a"], label: "agent" })
               hints.push({ keys: ["ctrl", ","], label: "settings" })
               hints.push({ keys: ["esc"], label: "close" })
               return hints

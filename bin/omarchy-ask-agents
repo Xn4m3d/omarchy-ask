@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# omarchy:summary=List the coding agents actually installed on this machine
+# omarchy:args=[--default]
+# omarchy:examples=omarchy-ask-agents | omarchy-ask-agents --default
+
+# One agent id per line, so the overlay can offer a switch between the agents
+# that exist here instead of a fixed menu of every agent Omarchy knows about.
+#
+# Installation is decided with `mise where`, the same test omarchy-default-agent
+# runs before offering to install one. A binary on PATH is NOT evidence: mise
+# keeps a shim in ~/.local/bin for every tool it knows about, installed or not,
+# so `command -v` happily reports agents that would open an install prompt the
+# first time you asked them anything.
+
+set -uo pipefail
+
+# id:mise-package, in the order the switch should cycle through them. Mirrors
+# the case list in omarchy-default-agent; ids whose package differs from the id
+# are spelled out there too.
+AGENTS=(
+  "claude:claude"
+  "codex:codex"
+  "grok:npm:@xai-official/grok"
+  "gemini:gemini"
+  "opencode:opencode"
+  "copilot:copilot"
+  "crush:crush"
+  "pi:pi"
+  "omp:github:can1357/oh-my-pi"
+)
+
+if [[ ${1:-} == "--default" ]]; then
+  omarchy-default-agent
+  exit 0
+fi
+
+command -v mise >/dev/null || exit 0
+
+for entry in "${AGENTS[@]}"; do
+  id=${entry%%:*}
+  package=${entry#*:}
+  mise where "$package" &>/dev/null && printf '%s\n' "$id"
+done
+
+exit 0

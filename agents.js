@@ -79,6 +79,13 @@ function parseAnthropicEnvelope(line) {
         && ev.content_block.type === "tool_use")
       return { kind: "tool", text: String(ev.content_block.name || "tool") }
 
+    // A turn that reaches for a tool comes back in several text blocks, and
+    // they are not continuations of one another: without a break the last word
+    // of one runs straight into the first word of the next.
+    if (ev.type === "content_block_start" && ev.content_block
+        && ev.content_block.type === "text")
+      return { kind: "break" }
+
     return null
   }
 

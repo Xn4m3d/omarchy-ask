@@ -36,7 +36,7 @@ place.
 
 ```bash
 omarchy plugin add https://github.com/Xn4m3d/omarchy-ask.git --enable --yes
-ln -sf ~/.config/omarchy/plugins/xn4m3d.ask/bin/omarchy-ask ~/.local/bin/omarchy-ask
+ln -sf ~/.config/omarchy/plugins/xn4m3d.ask/bin/omarchy-ask* ~/.local/bin/
 ```
 
 Then one line in `~/.config/hypr/bindings.lua`:
@@ -109,6 +109,12 @@ it in a terminal through the agent's own `--resume`.
 **It says what it is doing.** Which model answered, how much of your rate limit
 is gone, and — folded away until you want it — the agent's reasoning.
 
+**It switches agents mid-thought.** `ctrl+shift+a` — or a click on the agent's
+name — moves to the next agent *installed on this machine*, asked of `mise` the
+same way Omarchy asks before offering to install one. No menu of agents you do
+not have. The choice is the plugin's own: `omarchy default agent` keeps whatever
+the rest of your desktop was told to use.
+
 ## Keys
 
 | Key | Does |
@@ -126,6 +132,7 @@ is gone, and — folded away until you want it — the agent's reasoning.
 | `ctrl+shift+c` | copy the answer (a `copy` button sits beside the question too) |
 | `ctrl+t` | fold the agent's reasoning open or shut |
 | `ctrl+h` | history |
+| `ctrl+shift+a` | switch to the next installed agent |
 | `ctrl+,` | settings |
 | `ctrl+c` | stop a running answer |
 | `esc` | close — the agent keeps running |
@@ -135,8 +142,13 @@ is gone, and — folded away until you want it — the agent's reasoning.
 | Agent | Inline streaming | Notes |
 |---|---|---|
 | `claude` | yes | verified end to end against Claude Code's `stream-json` |
-| `grok` | adapter written, **unverified** | same Anthropic envelope on paper; no signed-in CLI here to prove it |
+| `grok` | yes | verified end to end against Grok 4.6: deltas, session id, tool calls |
 | everything else | no — terminal | via `omarchy-agent --prompt`, which works for all of them |
+
+The switch offers only what `mise` reports as installed. A binary on `PATH` is
+not enough to go on — mise keeps a shim there for every tool it knows about,
+installed or not, so a naive check offers you agents that would open an install
+prompt the first time you asked them anything.
 
 Adding an agent is two pure functions in [`agents.js`](agents.js): `argv(opts)`
 and `parse(line)`. An unrecognised line returns `null` and is ignored — these
@@ -166,7 +178,10 @@ Built and exercised on a single machine. Being straight about which is which:
 
 **Verified by running it**
 
-- Summon → type → send → answer, on Claude, repeatedly.
+- Summon → type → send → answer, on Claude **and on Grok**, repeatedly.
+- Switching agents with `ctrl+shift+a`, and the session id being dropped on the
+  way across so the next question does not ask one agent to resume another's
+  conversation.
 - The agent really starts in the captured directory (checked through `/proc/<pid>/cwd`).
 - Attachments: window shot, region, clipboard text, file picker — files land,
   chips appear, paths reach the prompt.
@@ -183,10 +198,11 @@ Built and exercised on a single machine. Being straight about which is which:
 - Prompt quoting against `$VAR`, backticks, `$(…)` and apostrophes.
 - The adapter parser, unit-tested on real lines including malformed JSON.
 
+- A run that cannot start — an agent whose working directory no longer exists —
+  ends in a stated error rather than a card that waits forever.
+
 **Written but not observed**
 
-- **Grok inline.** No signed-in xAI CLI on this machine, so the adapter has
-  never actually run.
 - **The `copy` button's click.** The shortcut is verified and the button calls
   the same function, but there is no synthetic-mouse tool here — no click has
   ever been sent to this card. It is the only untested *click* in the whole UI.
