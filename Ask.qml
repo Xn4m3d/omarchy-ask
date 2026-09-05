@@ -638,11 +638,16 @@ Item {
     command: ["omarchy-ask-agents"]
     stdout: StdioCollector {
       onStreamFinished: {
+        // Installed AND streamable here. Offering an agent with no adapter
+        // would be a trap: Enter would quietly fall back to the terminal, and
+        // the terminal path runs `omarchy-agent`, which takes no agent
+        // argument and launches the Omarchy default -- so the card would name
+        // one agent while a different one answered.
         var found = []
         var lines = text.split("\n")
         for (var i = 0; i < lines.length; i++) {
           var name = lines[i].trim()
-          if (name) found.push(name)
+          if (name && Agents.supportsInline(name)) found.push(name)
         }
         root.installedAgents = found
       }
@@ -878,6 +883,18 @@ Item {
               // so the line never claims something it has not been told.
               text: {
                 var name = root.effectiveAgent || "no default agent"
+
+                // Forced to an agent this card cannot stream -- only reachable
+                // from the settings list. Enter goes to a terminal, and the
+                // terminal runs the Omarchy default. Say so, rather than
+                // printing a name that will not be the one answering.
+                if (root.effectiveAgent && !root.inlineAvailable) {
+                  name += " → terminal"
+                  if (root.agent && root.agent !== root.effectiveAgent)
+                    name += " · " + root.agent
+                  return name
+                }
+
                 if (root.model) name += " · " + root.shortModel(root.model)
                 return name
               }
@@ -1041,6 +1058,7 @@ Item {
             width: parent.width
             config: config
             agent: root.agent
+            installedAgents: root.installedAgents
             foreground: root.foreground
             fontFamily: root.fontFamily
           }

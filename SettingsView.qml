@@ -58,7 +58,13 @@ Column {
     }
   ]
 
-  readonly property var agentChoices: ["", "claude", "grok", "codex", "gemini", "opencode", "crush", "pi"]
+  // Supplied by the card: the agents installed here that it can actually
+  // stream from. A fixed list would offer agents this machine does not have,
+  // and agents with no adapter -- for which forcing the setting does nothing
+  // except make the header name one agent while another answers.
+  property var installedAgents: []
+
+  readonly property var agentChoices: [""].concat(root.installedAgents)
 
   function valueText(key) {
     if (!root.config) return ""

@@ -108,10 +108,11 @@ starts an agent that has been told nothing.
 ![The agent name in the header changing as ctrl+shift+a cycles through them](docs/agents.gif)
 
 **It switches agents mid-thought.** `ctrl+shift+a` — or a click on the agent's
-name — moves to the next agent *installed on this machine*, asked of `mise` the
-same way Omarchy asks before offering to install one. No menu of agents you do
-not have. The choice is the plugin's own: `omarchy default agent` keeps whatever
-the rest of your desktop was told to use.
+name — moves to the next agent that is *installed on this machine* **and** that
+ask can stream from. Installation is asked of `mise`, the same way Omarchy asks
+before offering to install one. No menu of agents you do not have, and none it
+would only pretend to use. The choice is the plugin's own: `omarchy default
+agent` keeps whatever the rest of your desktop was told to use.
 
 ![The same card under Solitude, Tokyo Night and Catppuccin Latte](docs/themes.png)
 
@@ -151,10 +152,20 @@ open card, without restarting anything.
 | `grok` | yes | verified end to end against Grok 4.6: deltas, session id, tool calls |
 | everything else | no — terminal | via `omarchy-agent --prompt`, which works for all of them |
 
-The switch offers only what `mise` reports as installed. A binary on `PATH` is
-not enough to go on — mise keeps a shim there for every tool it knows about,
-installed or not, so a naive check offers you agents that would open an install
-prompt the first time you asked them anything.
+The switch offers only agents that are installed **and** streamable. Two
+reasons, and the second is the one that bites:
+
+`mise` decides what counts as installed. A binary on `PATH` is not enough to go
+on — mise keeps a shim there for every tool it knows about, installed or not, so
+a naive check offers you agents that would open an install prompt the first time
+you asked them anything.
+
+An agent with no adapter would be worse than useless in the switch. `enter`
+falls back to the terminal for those, and the terminal path runs
+`omarchy-agent`, which takes no agent argument: it launches whatever `omarchy
+default agent` says. So picking one in the card would show its name in the
+header while a completely different agent answered. Force one from the settings
+anyway and the header says so out loud — `codex → terminal · grok`.
 
 Adding an agent is two pure functions in [`agents.js`](agents.js): `argv(opts)`
 and `parse(line)`. An unrecognised line returns `null` and is ignored — these
@@ -171,7 +182,7 @@ Space changes the selected value; booleans flip, enums advance.
 | `captureWindow` | `true` | attach class and title of the window you came from |
 | `captureCwd` | `true` | resolve the terminal's directory and run the agent in it |
 | `sendMode` | `inline` | what plain `enter` does |
-| `agent` | `""` | force an agent for the inline path; empty follows `omarchy default agent` |
+| `agent` | `""` | force an agent for the inline path; empty follows `omarchy default agent`. Lists what is installed and streamable |
 | `reasoningTokens` | `0` | thinking budget for the inline run; `0` disables it |
 | `animations` | `true` | entrance, activity pulse, streaming cursor |
 | `inlineTools` | `Read Grep Glob WebFetch WebSearch` | tools the inline run may use |
@@ -190,6 +201,8 @@ Built and exercised on a single machine. Being straight about which is which:
 - Switching agents with `ctrl+shift+a`, and the session id being dropped on the
   way across so the next question does not ask one agent to resume another's
   conversation.
+- A forced agent that cannot stream is named as such in the header rather than
+  silently answered by a different one.
 - The agent really starts in the captured directory (checked through `/proc/<pid>/cwd`).
 - Attachments: window shot, region, clipboard text, file picker — files land,
   chips appear, paths reach the prompt.
