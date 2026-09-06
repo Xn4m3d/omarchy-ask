@@ -312,9 +312,15 @@ Item {
   // taken back once the capture is done or the composer goes deaf.
   function runCapture(kind, args) {
     if (root.capturing) return
-    root.capturing = true
     captureProc.kind = kind
     captureProc.command = args
+    captureProc.timedOut = false
+    // Set before `capturing` flips, so the watchdog starts on the right
+    // deadline rather than restarting when `kind` lands a moment later.
+    // Region picking is paced by the user; the other two modes never wait on
+    // one and have no business taking more than a moment.
+    captureWatchdog.interval = kind === "region" ? 180000 : 15000
+    root.capturing = true
     captureProc.running = true
   }
 
@@ -340,10 +346,31 @@ Item {
     onTriggered: root.notice = ""
   }
 
+  // `capturing` hides the card and gates its visibility, and until now only the
+  // helper exiting could clear it -- so a capture that never returned left
+  // Super+Q toggling a card that could no longer draw itself, with no way back
+  // short of restarting the shell. That happened: slurp inherited Quickshell's
+  // never-closed stdin pipe and blocked forever. The script now detaches its
+  // stdin, which removes that cause; this removes the whole class of it.
+  Timer {
+    id: captureWatchdog
+    interval: 15000
+    running: root.capturing
+    onTriggered: {
+      if (!root.capturing) return
+      captureProc.timedOut = true
+      captureProc.running = false
+      root.capturing = false
+      root.flash("capture timed out")
+      Qt.callLater(function () { root.focusActiveSurface() })
+    }
+  }
+
   Process {
     id: captureProc
     property string kind: ""
     property string result: ""
+    property bool timedOut: false
 
     stdout: StdioCollector {
       onStreamFinished: captureProc.result = text.trim()
@@ -353,6 +380,14 @@ Item {
       var path = captureProc.result
       captureProc.result = ""
       root.capturing = false
+
+      // The watchdog already said its piece and killed this; the non-zero exit
+      // it produced is its own doing, not a cancelled pick.
+      if (captureProc.timedOut) {
+        captureProc.timedOut = false
+        Qt.callLater(function () { root.focusActiveSurface() })
+        return
+      }
 
       if (exitCode === 0 && path) root.addAttachment(captureProc.kind, path)
       // A cancelled region pick and an empty clipboard both land here. Neither
