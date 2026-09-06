@@ -14,6 +14,17 @@
 
 set -uo pipefail
 
+# slurp reads a list of predefined rectangles from stdin whenever stdin is not
+# a TTY. Quickshell hands every child process a pipe it never writes to and
+# never closes, so an inherited stdin leaves slurp blocked on a read that can
+# never return: no picker is ever mapped, this script never exits, and the
+# overlay -- which hides itself for the duration of a capture -- stays hidden
+# for good (observed, not theorised: wchan anon_pipe_read, zero layer surface).
+# Hyprland's own binds do not hit this because they exec with a different
+# stdin, which is why Super+Shift+S works while the same helper called from
+# the shell does not.
+exec </dev/null
+
 DIR="${XDG_RUNTIME_DIR:-/tmp}/omarchy-ask"
 mkdir -p "$DIR" || exit 1
 
