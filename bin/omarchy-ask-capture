@@ -4,9 +4,16 @@
 # omarchy:args=window <geometry> | region | clipboard
 # omarchy:hidden=true
 
-# Produces one attachment file and prints its path. Prints nothing and exits
-# non-zero when there is nothing to attach (selection cancelled, empty
-# clipboard), which the overlay reads as "leave the composer alone".
+# Produces one attachment file and prints its path on the first line, then a
+# short human summary of what is actually in it on the second. The summary is
+# what the overlay puts on the chip: "clipboard text" tells you the key fired,
+# but not whether it caught the thing you meant to copy, which is the only
+# question you have at that moment. The second line is optional -- the overlay
+# falls back to a category label without it.
+#
+# Prints nothing and exits non-zero when there is nothing to attach (selection
+# cancelled, empty clipboard), which the overlay reads as "leave the composer
+# alone".
 #
 # The overlay hides itself before calling the screen-capturing modes: it is an
 # Overlay-layer surface covering the screen, so anything it does not step out
@@ -35,6 +42,33 @@ find "$DIR" -type f -mmin +1440 -delete 2>/dev/null || true
 
 stamp() { date +'%Y%m%d-%H%M%S-%N' | cut -c1-19; }
 
+# "X,Y WxH" -> "WxH". The picker already knows the size it handed back, so a
+# screenshot never needs to be re-read to be described.
+geometry_size() { printf '%s' "${1#* }"; }
+
+# file(1) comes from the `file` package, which pacman itself depends on, so it
+# is there on any Arch host -- but a missing or unparsable answer costs us the
+# dimensions, never the attachment.
+image_size() {
+  local desc
+  desc=$(file -b "$1" 2>/dev/null) || return 1
+  [[ $desc =~ ([0-9]+)[[:space:]]*x[[:space:]]*([0-9]+) ]] || return 1
+  printf '%sx%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+# The opening words of the text, on one line. Cut at 44 so the chip shows the
+# whole label rather than eliding a second time on top of this one -- two
+# truncations in one string read as damage, not as brevity.
+text_preview() {
+  local full
+  full=$(tr -s '[:space:]' ' ' <"$1" | sed 's/^ *//; s/ *$//')
+  if ((${#full} > 44)); then
+    printf '%s...' "${full:0:44}"
+  else
+    printf '%s' "$full"
+  fi
+}
+
 # The overlay sets itself invisible before calling us, but a Wayland surface is
 # not gone the instant the client asks: the compositor still has to commit a
 # frame without it. Capturing immediately catches the card mid-teardown and
@@ -57,6 +91,7 @@ case "$mode" in
     out="$DIR/window-$(stamp).png"
     grim -g "$geometry" "$out" || exit 1
     echo "$out"
+    echo "window $(geometry_size "$geometry")"
     ;;
 
   region)
@@ -72,6 +107,7 @@ case "$mode" in
     out="$DIR/region-$(stamp).png"
     grim -g "$geometry" "$out" || exit 1
     echo "$out"
+    echo "region $(geometry_size "$geometry")"
     ;;
 
   clipboard)
@@ -88,12 +124,19 @@ case "$mode" in
       out="$DIR/clipboard-$(stamp).$ext"
       wl-paste --type "$image_type" >"$out" 2>/dev/null || exit 1
       [[ -s $out ]] || { rm -f "$out"; exit 1; }
+      if size=$(image_size "$out"); then
+        summary="image $size"
+      else
+        summary="image"
+      fi
     else
       out="$DIR/clipboard-$(stamp).txt"
       wl-paste --no-newline >"$out" 2>/dev/null || exit 1
       [[ -s $out ]] || { rm -f "$out"; exit 1; }
+      summary=$(text_preview "$out")
     fi
     echo "$out"
+    echo "$summary"
     ;;
 
   *)

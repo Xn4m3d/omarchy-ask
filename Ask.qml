@@ -289,9 +289,15 @@ Item {
     return root.basename(path)
   }
 
-  function addAttachment(kind, path) {
+  // `label` is what the helper says it actually caught -- the first words of
+  // the clipboard, the size of the shot. A chip reading "clipboard text" says
+  // the key fired and nothing else, which leaves the one question you have
+  // unanswered: is that the thing I meant to copy? Falls back to the category
+  // when the helper offers no summary, so the file picker keeps its basename.
+  function addAttachment(kind, path, label) {
     var next = root.attachments.slice()
-    next.push({ kind: kind, path: path, label: root.attachmentLabel(kind, path) })
+    next.push({ kind: kind, path: path,
+                label: label || root.attachmentLabel(kind, path) })
     root.attachments = next
   }
 
@@ -377,7 +383,10 @@ Item {
     }
 
     onExited: function (exitCode) {
-      var path = captureProc.result
+      // Line 1 is the path, line 2 the helper's summary of what is in it.
+      var lines = captureProc.result.split("\n")
+      var path = (lines[0] || "").trim()
+      var label = lines.length > 1 ? lines[1].trim() : ""
       captureProc.result = ""
       root.capturing = false
 
@@ -389,7 +398,7 @@ Item {
         return
       }
 
-      if (exitCode === 0 && path) root.addAttachment(captureProc.kind, path)
+      if (exitCode === 0 && path) root.addAttachment(captureProc.kind, path, label)
       // A cancelled region pick and an empty clipboard both land here. Neither
       // is an error worth a dialog, but silence would read as a broken key.
       else if (captureProc.kind === "clipboard") root.flash("clipboard is empty")
@@ -1239,10 +1248,16 @@ Item {
             id: chipRepeater
             model: {
               var chips = []
+              // A path is identified by its tail, so it elides in the middle.
+              // An attachment label previews content, and content is
+              // identified by how it starts -- eliding its middle would cut
+              // away the very half that says what you grabbed.
               if (root.ctxClass)
-                chips.push({ glyph: "", label: root.ctxClass, index: -1 })
+                chips.push({ glyph: "", label: root.ctxClass, index: -1,
+                             elide: Text.ElideMiddle })
               if (root.ctxCwd)
-                chips.push({ glyph: "", label: root.prettyPath(root.ctxCwd), index: -1 })
+                chips.push({ glyph: "", label: root.prettyPath(root.ctxCwd), index: -1,
+                             elide: Text.ElideMiddle })
 
               // Attachments carry an index so their chip can remove them.
               // Automatic context has index -1: it says where the question came
@@ -1250,7 +1265,8 @@ Item {
               for (var i = 0; i < root.attachments.length; i++) {
                 var a = root.attachments[i]
                 chips.push({ glyph: a.kind === "clipboard" ? "\uf0ea" : "\uf03e",
-                             label: a.label, index: i })
+                             label: a.label, index: i,
+                             elide: Text.ElideRight })
               }
               return chips
             }
@@ -1291,7 +1307,7 @@ Item {
                   opacity: 0.85
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  elide: Text.ElideMiddle
+                  elide: chip.modelData.elide
                   width: Math.min(implicitWidth, Style.space(260))
                   anchors.verticalCenter: parent.verticalCenter
                 }
