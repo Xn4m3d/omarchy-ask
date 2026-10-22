@@ -42,6 +42,11 @@ Column {
       help: "empty follows omarchy default agent; the terminal path always does"
     },
     {
+      key: "opencodeModel",
+      label: "OpenCode model",
+      help: "provider/model in ask.json; empty uses OpenCode default"
+    },
+    {
       key: "reasoningTokens",
       label: "show reasoning",
       help: "ask the agent to think out loud; costs tokens and time"

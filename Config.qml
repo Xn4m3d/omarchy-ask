@@ -20,6 +20,7 @@ Item {
     captureCwd: true,
     sendMode: "inline",
     agent: "",
+    opencodeModel: "",
     inlineTools: "Read Grep Glob WebFetch WebSearch",
     animations: true,
     reasoningTokens: 0

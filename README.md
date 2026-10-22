@@ -174,6 +174,7 @@ open card, without restarting anything.
 |---|---|---|
 | `claude` | yes | verified end to end against Claude Code's `stream-json` |
 | `grok` | yes | verified end to end against Grok 4.6: deltas, session id, tool calls |
+| `opencode` | yes | JSONL text parts appear inline; uses the built-in `plan` agent |
 | everything else | no — terminal | via `omarchy-agent --prompt`, which works for all of them |
 
 The switch offers only agents that are installed **and** streamable. `mise`
@@ -215,6 +216,7 @@ Space changes the selected value; booleans flip, enums advance.
 | `captureCwd` | `true` | resolve the terminal's directory and run the agent in it |
 | `sendMode` | `inline` | what plain `enter` does |
 | `agent` | `""` | force an agent for the inline path; empty follows `omarchy default agent`. Lists what is installed and streamable |
+| `opencodeModel` | `""` | optional `provider/model` for OpenCode; empty keeps its configured default |
 | `reasoningTokens` | `0` | thinking budget for the inline run; `0` disables it |
 | `animations` | `true` | entrance, activity pulse, streaming cursor |
 | `inlineTools` | `Read Grep Glob WebFetch WebSearch` | tools the inline run may use |
@@ -223,6 +225,21 @@ They live in `~/.config/omarchy/ask.json`, deliberately **outside** this
 checkout: `omarchy plugin update` fast-forwards the plugin directory and would
 walk over a config file kept inside it. Only changed keys are written.
 
+OpenCode uses its built-in `plan` agent and existing permission settings; it
+never passes `--auto`. The Claude-style `inlineTools` list and `reasoningTokens`
+setting do not configure OpenCode. Text arrives as completed parts rather than
+individual token deltas. Follow-ups use OpenCode's `--session` flag.
+
+For example, add `"opencodeModel": "opencode/glm-5.3-flash-free"` to
+`~/.config/omarchy/ask.json` to select a model explicitly. No model is hardcoded.
+Ensure `opencode` on the shell's PATH is the version you intend to use.
+
+Adapter regression tests require Node.js and no model credentials:
+
+```bash
+node --test tests/agents.test.cjs
+```
+
 ## Tested, and not
 
 Built and exercised on a single machine. Being straight about which is which:
@@ -230,6 +247,9 @@ Built and exercised on a single machine. Being straight about which is which:
 **Verified by running it**
 
 - Summon → type → send → answer, on Claude **and on Grok**, repeatedly.
+- OpenCode: an answer displayed in the card on a locally patched Omarchy shell;
+  the final adapter argv also exercised against the real CLI for an initial
+  answer and a follow-up that reused the same session id.
 - Switching agents with `ctrl+shift+a`, and the session id being dropped on the
   way across so the next question does not ask one agent to resume another's
   conversation.

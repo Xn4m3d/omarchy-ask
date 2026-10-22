@@ -139,11 +139,39 @@ var grok = {
   parse: parseAnthropicEnvelope
 }
 
+// OpenCode emits completed text parts as JSONL (not token-by-token deltas).
+// Keep the prompt in argv: it must never become shell source. Closing stdin
+// matters under QProcess, where an open input pipe can leave `run` waiting.
+var opencode = {
+  id: "opencode",
+  argv: function (opts) {
+    var a = ["sh", "-c", 'exec "$@" </dev/null', "omarchy-ask",
+             "opencode", "run", "--format", "json", "--agent", "plan"]
+    if (opts.opencodeModel) a.push("--model", opts.opencodeModel)
+    if (opts.sessionId) a.push("--session", opts.sessionId)
+    a.push(opts.prompt)
+    return a
+  },
+  parse: function (line) {
+    var m
+    try { m = JSON.parse(line) } catch (e) { return null }
+    if (!m || typeof m !== "object") return null
+    if (m.type === "error")
+      return { kind: "error", text: String((m.error && m.error.message) || "OpenCode reported an error") }
+    if (m.type === "step_start" && m.sessionID)
+      return { kind: "session", sessionId: String(m.sessionID) }
+    if (m.type === "text" && m.part && typeof m.part.text === "string")
+      return { kind: "delta", text: m.part.text }
+    // step_finish can precede another step, so process exit ends the turn.
+    return null
+  }
+}
+
 // Every other agent omarchy-agent knows about routes to a terminal instead of
 // streaming here. That is a deliberate floor rather than a gap: a wrong guess
 // at an output format produces a card that sits there empty, while the
 // terminal path already works for all of them.
-var ADAPTERS = { claude: claude, grok: grok }
+var ADAPTERS = { claude: claude, grok: grok, opencode: opencode }
 
 function forAgent(name) {
   return ADAPTERS[String(name)] || null

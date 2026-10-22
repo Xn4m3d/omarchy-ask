@@ -534,12 +534,13 @@ Item {
       cwd: root.ctxCwd,
       sessionId: root.sessionId,
       allowedTools: String(config.get("inlineTools") || Agents.READ_ONLY_TOOLS),
-      reasoningTokens: Number(config.get("reasoningTokens") || 0)
+      reasoningTokens: Number(config.get("reasoningTokens") || 0),
+      opencodeModel: String(config.get("opencodeModel") || "")
     })
     // Assigned every run, never conditionally: workingDirectory persists on
     // the Process, so a stale one would quietly follow the next question into
     // a directory that has nothing to do with it.
-    runProc.workingDirectory = root.ctxCwd
+    runProc.workingDirectory = root.ctxCwd || root.homeDir
     root.sawOutput = false
     runProc.running = true
 
